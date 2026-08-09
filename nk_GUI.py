@@ -2,6 +2,17 @@
 nk_GUI.py - Optical Constants (n, k) and Dielectric Function (eps1, eps2) Viewer
 Based on refractiveindex.info database (bundled in ./db, CC0 public domain).
 
+v0.5.3 (refractiveindex_GUI): log-axis bug fixes.
+        - Scroll zoom / Apply button / entry boxes all now work correctly
+          when x or y is on a log scale. matplotlib's get_xlim/set_xlim
+          always work in LINEAR values regardless of scale, but the previous
+          code did spurious log<->linear conversions that broke zoom and
+          entry-box round-tripping on log axes.
+        - Apply button: now applies user limits AFTER plot, so they survive
+          the autoscale reset that clear() triggers (previously silently
+          dropped on both linear and log modes).
+        - Range info text and entry boxes always show LINEAR values.
+
 v0.5.2 (refractiveindex_GUI): extra-DB path is now ./db_extra/ (was ./pu_data/db/).
         CSV export simplified to 3 columns (wavelength_nm, n, k).
 
@@ -401,7 +412,7 @@ class NkCurveGUI:
 
     def __init__(self, root):
         self.root = root
-        root.title(f"nk Curve Viewer v0.5.2 — refractiveindex.info ({_DB_SOURCE})")
+        root.title(f"nk Curve Viewer v0.5.3 — refractiveindex.info ({_DB_SOURCE})")
         root.geometry("1200x900")
         root.minsize(1000, 650)
         root.state("zoomed")   # start maximized
@@ -787,76 +798,58 @@ class NkCurveGUI:
         self.ylog_var.set(ylog_get(ax))
 
     def _sync_active_plot_from_entries(self):
-        """Push entry widget values into the active plot's axis limits."""
-        active = self.active_plot.get()
-        xmode = self.xaxis_var.get()
+        """Sync ylog state from the UI checkbox into the active plot's state dict.
+        Kept for compatibility with toggle handlers; the actual x/y limits are
+        applied AFTER plot by _apply_xy_from_entries so they survive autoscale.
+        """
+        ax = self.ax_nk if self.active_plot.get() == "nk" else self.ax_eps
+        ylog_set(ax, self.ylog_var.get())
 
-        if active == "nk":
-            ax = self.ax_nk
-            def_lo = float(self.n_vals.min() - 0.1) if self.n_vals is not None else None
-            def_hi = float(self.n_vals.max() + 0.5) if self.n_vals is not None else None
+    def _apply_xy_from_entries(self):
+        """Apply xmin/xmax/ymin/ymax from entry boxes to axes. Called after
+        _update_plot's clear+plot so the user's limits survive autoscale reset.
+
+        Log-axis handling: the entry boxes always show LINEAR values (nm / eV /
+        n / k / ε), so when the axis is log we convert linear -> log for set_*
+        via the _set_*_linear helpers. Values <= 0 are silently dropped on a
+        log axis.
+        """
+        # X (shared across both plots since both use the same x range)
+        try:
+            xmin_v = float(self.xmin.get().strip()) if self.xmin.get().strip() else None
+            xmax_v = float(self.xmax.get().strip()) if self.xmax.get().strip() else None
+        except ValueError:
+            xmin_v = xmax_v = None
+
+        if xmin_v is not None or xmax_v is not None:
+            cur_lo, cur_hi = _xlim_linear(self.ax_nk)
+            new_lo = xmin_v if xmin_v is not None else cur_lo
+            new_hi = xmax_v if xmax_v is not None else cur_hi
+            if new_lo < new_hi:
+                if _set_xlim_linear(self.ax_nk, new_lo, new_hi):
+                    _set_xlim_linear(self.ax_eps, new_lo, new_hi)
+
+        # Y (active plot only)
+        try:
+            ymin_v = float(self.ymin.get().strip()) if self.ymin.get().strip() else None
+            ymax_v = float(self.ymax.get().strip()) if self.ymax.get().strip() else None
+        except ValueError:
+            ymin_v = ymax_v = None
+
+        ax_active = self.ax_nk if self.active_plot.get() == "nk" else self.ax_eps
+        if ymin_v is not None or ymax_v is not None:
+            cur_lo, cur_hi = _ylim_linear(ax_active)
+            new_lo = ymin_v if ymin_v is not None else cur_lo
+            new_hi = ymax_v if ymax_v is not None else cur_hi
+            if new_lo < new_hi:
+                _set_ylim_linear(ax_active, new_lo, new_hi)
+
+        # Keep internal ymin/ymax mirrors in sync (used by other code paths)
+        ylo, yhi = _ylim_linear(ax_active)
+        if ax_active is self.ax_nk:
+            self._ymin_nk, self._ymax_nk = ylo, yhi
         else:
-            ax = self.ax_eps
-            if self.n_vals is not None and self.k_vals is not None:
-                eps1 = self.n_vals**2 - self.k_vals**2
-                eps2 = 2 * self.n_vals * self.k_vals
-                v_lo = min(float(eps1.min()), float(eps2.min()), 0.0)
-                v_hi = max(float(eps1.max()), float(eps2.max()), 0.0)
-                span = v_hi - v_lo
-                def_lo = v_lo - span * 0.02
-                def_hi = v_hi + span * 0.02
-            else:
-                def_lo = def_hi = None
-
-        # X range
-        try:
-            cur_xmin = float(self.xmin.get().strip()) if self.xmin.get().strip() else None
-            cur_xmax = float(self.xmax.get().strip()) if self.xmax.get().strip() else None
-        except ValueError:
-            cur_xmin = cur_xmax = None
-
-        # X range — apply individually (allow partial entry)
-        try:
-            cur_xmin_v = float(self.xmin.get().strip()) if self.xmin.get().strip() else None
-            cur_xmax_v = float(self.xmax.get().strip()) if self.xmax.get().strip() else None
-        except ValueError:
-            cur_xmin_v = cur_xmax_v = None
-
-        if cur_xmin_v is not None and cur_xmax_v is not None:
-            ax.set_xlim(cur_xmin_v, cur_xmax_v)
-        elif cur_xmin_v is not None:
-            # Only xmin set — adjust lower bound, keep upper
-            xlo, xhi = ax.get_xlim()
-            ax.set_xlim(cur_xmin_v, xhi)
-        elif cur_xmax_v is not None:
-            # Only xmax set — adjust upper bound, keep lower
-            xlo, xhi = ax.get_xlim()
-            ax.set_xlim(xlo, cur_xmax_v)
-
-        # Y range — apply individually (allow partial entry)
-        try:
-            cur_ymin_v = float(self.ymin.get().strip()) if self.ymin.get().strip() else None
-            cur_ymax_v = float(self.ymax.get().strip()) if self.ymax.get().strip() else None
-        except ValueError:
-            cur_ymin_v = cur_ymax_v = None
-
-        if cur_ymin_v is not None and cur_ymax_v is not None:
-            ax.set_ylim(cur_ymin_v, cur_ymax_v)
-        elif cur_ymin_v is not None:
-            ylo, yhi = ax.get_ylim()
-            ax.set_ylim(cur_ymin_v, yhi)
-        elif cur_ymax_v is not None:
-            ylo, yhi = ax.get_ylim()
-            ax.set_ylim(ylo, cur_ymax_v)
-
-        # Log Y
-        ylog = self.ylog_var.get()
-        ylog_set(ax, ylog)
-
-        if active == "nk":
-            self._ymin_nk, self._ymax_nk = ax.get_ylim()
-        else:
-            self._ymin_eps, self._ymax_eps = ax.get_ylim()
+            self._ymin_eps, self._ymax_eps = ylo, yhi
 
     # ════════════════════════════════════════════════════════
     # X-axis mode switch
@@ -969,13 +962,26 @@ class NkCurveGUI:
 
     def _do_scroll(self, ax, event):
         factor = 1.15 if event.step > 0 else 1.0 / 1.15
-        xc, _ = ax.transData.inverted().transform((event.x, event.y))
+        # transData.inverted().transform returns LINEAR values regardless of
+        # axis scale (matplotlib handles log transform internally).
+        inv_x, inv_y = ax.transData.inverted().transform((event.x, event.y))
+
+        # X zoom around mouse X
         xlo, xhi = ax.get_xlim()
-        ax.set_xlim(xc - (xc - xlo) * factor, xc + (xhi - xc) * factor)
+        new_lo = inv_x - (inv_x - xlo) * factor
+        new_hi = inv_x + (xhi - inv_x) * factor
+        _set_xlim_linear(ax, new_lo, new_hi)
+
+        # Y zoom around axis center (not mouse Y)
         ylo, yhi = ax.get_ylim()
         yctr = (ylo + yhi) / 2.0
-        ax.set_ylim(yctr - (yctr - ylo) * factor,
-                    yctr + (yhi - yctr) * factor)
+        new_lo = yctr - (yctr - ylo) * factor
+        new_hi = yctr + (yhi - yctr) * factor
+        # On log y, a 15% zoom-out can push the lower bound below 0
+        # (matplotlib rejects). Clamp to a tiny positive to keep it sane.
+        if ax.get_yscale() == 'log' and new_lo <= 0:
+            new_lo = 1e-30
+        _set_ylim_linear(ax, new_lo, new_hi)
 
         # Always sync: zoomed plot becomes active, left panel shows its range
         self._sync_x_entries_from_ax(ax)
@@ -1003,7 +1009,7 @@ class NkCurveGUI:
     def _sync_x_entries_from_ax(self, ax):
         if self._suppress_sync_to_entries:
             return
-        xlo, xhi = ax.get_xlim()
+        xlo, xhi = _xlim_linear(ax)  # always linear, even if axis is log
         xmode = self.xaxis_var.get()
         if xmode == "energy":
             self.xmin.set(f"{xhi:.4g}")
@@ -1026,7 +1032,7 @@ class NkCurveGUI:
             self.yr_label.config(text="Y Min (ε):")
 
     def _sync_y_entries_from_ax(self, ax):
-        ylo, yhi = ax.get_ylim()
+        ylo, yhi = _ylim_linear(ax)  # always linear, even if axis is log
         self.ymin.set(f"{ylo:.4g}")
         self.ymax.set(f"{yhi:.4g}")
         if ax is self.ax_nk:
@@ -1045,8 +1051,8 @@ class NkCurveGUI:
     # ════════════════════════════════════════════════════════
     def _add_range_info(self, ax, xmode):
         """Add axis range info text to bottom-right corner of subplot."""
-        xlo, xhi = ax.get_xlim()
-        ylo, yhi = ax.get_ylim()
+        xlo, xhi = _xlim_linear(ax)  # linear, even if axis is log
+        ylo, yhi = _ylim_linear(ax)
 
         # Format x range
         if xmode == "energy":
@@ -1098,7 +1104,8 @@ class NkCurveGUI:
                 sp.set_color(FG)
             ax.tick_params(colors=FG, labelcolor=FG)
 
-        # Sync entry values into active plot before redraw
+        # Sync ylog state from UI BEFORE plot (plot code reads ylog_get to
+        # decide whether to set yscale to log).
         self._suppress_sync_to_entries = True
         self._sync_active_plot_from_entries()
         self._suppress_sync_to_entries = False
@@ -1163,8 +1170,36 @@ class NkCurveGUI:
         if xlog: self.ax_eps.set_xscale("log")
         if ylog_get(self.ax_eps): self.ax_eps.set_yscale("log")
 
+        # When y is log, autoscale may set ylim to a range containing zeros or
+        # negatives (e.g. -0.333 from k=0 data, or negative eps1), which
+        # matplotlib rejects with "non-positive ylim" warnings. Clamp to a
+        # sensible positive range with log-aware padding (multiplicative so
+        # we never accidentally produce a negative lower bound).
+        for ax, series in ((self.ax_nk, (n, k)), (self.ax_eps, (eps1, eps2))):
+            if ylog_get(ax):
+                vals = np.concatenate([np.asarray(s) for s in series])
+                pos = vals[np.isfinite(vals) & (vals > 0)]
+                if len(pos) > 0:
+                    lylo_raw, lyhi = float(pos.min()), float(pos.max())
+                    # Floor at 1% of median so a few zero-valued points don't
+                    # drag the lower bound to ~0 and dominate the log axis.
+                    lylo = max(lylo_raw, float(np.median(pos)) * 0.01, 1e-6)
+                    if lyhi <= lylo:
+                        lyhi = lylo * 10
+                    # Multiplicative padding for log axis: go down by a factor
+                    # (0.5x), up by 10% — avoids negative lower bound.
+                    new_lo = lylo * 0.5
+                    new_hi = lyhi * 1.1
+                    ax.set_ylim(new_lo, new_hi)
+
         self.fig_nk.suptitle(self.material_label, color=FG, fontsize=11, y=0.99)
         self.fig_eps.suptitle(self.material_label, color=FG, fontsize=11, y=0.99)
+
+        # Apply user-specified x/y limits from entry boxes AFTER plot so they
+        # survive the autoscale reset that clear() triggers.
+        self._suppress_sync_to_entries = True
+        self._apply_xy_from_entries()
+        self._suppress_sync_to_entries = False
 
         # Add axis range info in bottom-right corner (no interference with title)
         self._add_range_info(self.ax_nk, xmode)
@@ -1211,6 +1246,40 @@ def ylog_get(ax):
 
 def ylog_set(ax, val):
     _ylog_state[ax] = val
+
+
+# ────────────────────────────────────────────────────────────
+# Log-axis bridge helpers
+# matplotlib's get_xlim()/set_xlim()/transData always use LINEAR values
+# regardless of the axis scale (matplotlib handles the log transform
+# internally for display). GUI entry boxes already show/take LINEAR values
+# (nm / eV / n / k / ε), so the helpers are essentially pass-throughs that
+# just guard against invalid values (lo >= hi, or <= 0 on a log axis).
+# All get/set call sites in the GUI go through these.
+# ────────────────────────────────────────────────────────────
+def _xlim_linear(ax):
+    """Return (xlo, xhi) as matplotlib stores them (always LINEAR values)."""
+    return ax.get_xlim()
+
+def _ylim_linear(ax):
+    return ax.get_ylim()
+
+def _set_xlim_linear(ax, xlo, xhi):
+    """Set xlim from LINEAR values. Returns True if applied."""
+    if xlo is None or xhi is None or xlo >= xhi:
+        return False
+    if ax.get_xscale() == 'log' and (xlo <= 0 or xhi <= 0):
+        return False
+    ax.set_xlim(xlo, xhi)
+    return True
+
+def _set_ylim_linear(ax, ylo, yhi):
+    if ylo is None or yhi is None or ylo >= yhi:
+        return False
+    if ax.get_yscale() == 'log' and (ylo <= 0 or yhi <= 0):
+        return False
+    ax.set_ylim(ylo, yhi)
+    return True
 
 
 # ════════════════════════════════════════════════════════════

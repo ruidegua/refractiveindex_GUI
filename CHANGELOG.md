@@ -4,6 +4,35 @@ All notable changes to **refractiveindex_GUI** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.3] — 2026-08-09
+
+### Fixed
+- **Log-axis scroll zoom**: zoom factor was being applied in matplotlib's
+  data-coord space, which broke on log axes (zoom amount would be ~1.15x in
+  log space but not in linear/visual space). Now works correctly — verified
+  linear span scales by exactly 1.15x / 0.87x on log X and log Y.
+- **Apply button (any mode, any axis)**: previously user-entered limits in
+  `xmin` / `xmax` / `ymin` / `ymax` were silently dropped. Root cause: limits
+  were applied BEFORE `ax.clear() + plot()`, and the autoscale reset that
+  follows clear() overwrote them. Apply now runs AFTER the plot so limits
+  survive.
+- **Entry boxes on log axes**: previously showed log-axis data coords (e.g.
+  `2.477`) instead of linear nm/eV values (e.g. `300`). After the rewrite
+  matplotlib's `get_xlim()` is always LINEAR, so the entry boxes now show
+  what the user expects (`300` not `2.477`) regardless of log toggle.
+- **Range info text**: now always shows linear values with `(logX)` /
+  `(logY)` indicators instead of confusing raw log-space coords.
+- **Log Y auto-fit warning**: matplotlib would warn
+  `Attempt to set non-positive ylim on a log-scaled axis` whenever the
+  autoscale picked a range that included a zero/negative value (e.g. from
+  k=0 data or negative ε1). Now clamps to a multiplicative pad on log.
+
+### Added
+- 4 module-level helpers (`_xlim_linear`, `_ylim_linear`,
+  `_set_xlim_linear`, `_set_ylim_linear`) that bridge matplotlib's
+  always-LINTERNAL get/set_xlim API with the GUI's always-LINEAR entry
+  boxes. All GUI get/set call sites go through these.
+
 ## [0.5.2] — 2026-08-09
 
 ### Changed

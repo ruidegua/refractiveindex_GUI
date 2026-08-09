@@ -11,6 +11,7 @@ locally so it works offline without depending on the `refractiveindex`
 pip package's installed data path.
 
 > **Based on `nk_GUI_v0_5.py`** (2026-08-08).
+> v0.5.3: log-axis bug fixes (scroll zoom, Apply button, entry boxes).
 > v0.5.2: CSV export simplified to 3 columns (wavelength_nm, n, k); extra/custom
 > DB consolidated in `./db_extra/`.
 > v0.5.1: bundled-DB path resolution; the original feature set is unchanged.
@@ -114,7 +115,8 @@ See `db/doc/credits.txt` for the full upstream credit list and
 
 ## Versioning
 
-- **v0.5.2** (this repo) — 3-column CSV export; extra DB moved to `db_extra/`.
+- **v0.5.3** (this repo) — log-axis bug fixes (scroll zoom, Apply, entry boxes).
+- **v0.5.2** — 3-column CSV export; extra DB moved to `db_extra/`.
 - **v0.5.1** — bundled DB; title bar reports DB source.
 - **v0.5** — original two-plot independent-zoom/pan rewrite.
 
