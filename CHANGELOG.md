@@ -4,6 +4,16 @@ All notable changes to **refractiveindex_GUI** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.4] — 2026-08-09
+
+### Changed
+- **CSV export wavelength units**: changed from nm to μm (column header
+  `wavelength_um`, values divided by 1000). Matches upstream
+  refractiveindex.info raw data convention and most optics workflows
+  (e.g. infrared / fiber / mid-IR where wavelengths are typically 0.2–10 μm).
+  If you need nm in v0.5.4+, post-process with a `*1000` column or revert
+  to v0.5.3.
+
 ## [0.5.3] — 2026-08-09
 
 ### Fixed

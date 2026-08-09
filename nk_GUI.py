@@ -2,6 +2,11 @@
 nk_GUI.py - Optical Constants (n, k) and Dielectric Function (eps1, eps2) Viewer
 Based on refractiveindex.info database (bundled in ./db, CC0 public domain).
 
+v0.5.4 (refractiveindex_GUI): CSV export wavelength units changed from nm
+        to μm (column header wavelength_um, values divided by 1000). Most
+        optics workflows and the upstream refractiveindex.info raw data
+        files use μm.
+
 v0.5.3 (refractiveindex_GUI): log-axis bug fixes.
         - Scroll zoom / Apply button / entry boxes all now work correctly
           when x or y is on a log scale. matplotlib's get_xlim/set_xlim
@@ -412,7 +417,7 @@ class NkCurveGUI:
 
     def __init__(self, root):
         self.root = root
-        root.title(f"nk Curve Viewer v0.5.3 — refractiveindex.info ({_DB_SOURCE})")
+        root.title(f"nk Curve Viewer v0.5.4 — refractiveindex.info ({_DB_SOURCE})")
         root.geometry("1200x900")
         root.minsize(1000, 650)
         root.state("zoomed")   # start maximized
@@ -1223,11 +1228,13 @@ class NkCurveGUI:
         if not path:
             return
 
-        # v0.5.2: 3-column CSV (wavelength_nm, n, k) regardless of GUI x-axis mode.
-        # Epsilon1/epsilon2 can always be recomputed downstream as n^2 - k^2 / 2*n*k.
-        lines = ["wavelength_nm,n,k"]
-        for wl, ni, ki in zip(self.wavelengths, self.n_vals, self.k_vals):
-            lines.append(f"{wl:.4f},{ni:.6f},{ki:.6f}")
+        # v0.5.4: wavelength in micrometers (μm). refractiveindex.info upstream
+        # uses μm in raw data files and most optics workflows prefer μm over nm.
+        # Epsilon1/epsilon2 can always be recomputed downstream as
+        # n^2 - k^2 / 2*n*k (they don't depend on wavelength units).
+        lines = ["wavelength_um,n,k"]
+        for wl_nm, ni, ki in zip(self.wavelengths, self.n_vals, self.k_vals):
+            lines.append(f"{wl_nm / 1000.0:.6f},{ni:.6f},{ki:.6f}")
 
         with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
