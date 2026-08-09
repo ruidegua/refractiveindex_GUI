@@ -1,0 +1,7 @@
+# Runtime dependencies for nk_GUI.py and the pu_data build scripts.
+# Pin lower bounds; upper bounds are open so the package keeps moving.
+numpy>=1.20
+scipy>=1.7
+matplotlib>=3.5
+PyYAML>=5.4
+refractiveindex>=0.3

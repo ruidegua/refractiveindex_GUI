@@ -1,0 +1,1228 @@
+"""
+nk_GUI.py - Optical Constants (n, k) and Dielectric Function (eps1, eps2) Viewer
+Based on refractiveindex.info database (bundled in ./db, CC0 public domain).
+
+v0.5.1 (refractiveindex_GUI): prefer bundled db/ next to this script over the
+        system DB shipped with the `refractiveindex` pip package, so the repo
+        is self-contained. Title bar and DB_PATH reflect the choice at startup.
+
+v0.5 (original): two independent plots (Refractive Index, Dielectric Function)
+        in separate frames; left panel controls only the currently selected
+        (active) plot; independent zoom/pan per plot.
+
+Features:
+  - Select material by shelf / book / page (3-level tree)
+  - Two independent plot frames: n,k and eps1,eps2
+  - X-axis switchable: wavelength (nm) or photon energy (eV) — synced across both plots
+  - Per-plot Y range, log-Y toggle
+  - Tab-style active-plot selector on left panel (radio buttons)
+  - Rubber-band drag to zoom (mouse box select) — per plot
+  - Mouse-wheel zoom (fixed) — per plot
+  - Right-click drag to pan — per plot
+  - Query n/k at a given wavelength or energy
+  - Reset button to restore auto scale for active plot
+  - Export data to CSV
+
+Dependencies: numpy, matplotlib, tkinter (ttk), pyyaml, scipy, refractiveindex
+"""
+
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+from pathlib import Path
+import re
+
+import numpy as np
+import matplotlib
+matplotlib.use("TkAgg")
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+import yaml
+from scipy.interpolate import interp1d
+
+import refractiveindex.refractiveindex as ri
+
+# ════════════════════════════════════════════════════════════
+# Theme Colors
+# ════════════════════════════════════════════════════════════
+BG       = "#1e1e2e"
+FG       = "#cdd6f4"
+SEL_BG   = "#313244"
+SEL_FG   = "#cdd6f4"
+ACCENT   = "#89b4fa"
+ACCENT2  = "#f38ba8"
+ENTRY_BG = "#181825"
+BTN_BG   = "#313244"
+BTN_FG   = "#cdd6f4"
+
+# Prefer bundled db/ (next to this script) for self-contained use; fall back
+# to the system DB distributed with the `refractiveindex` pip package. The
+# bundled DB ships at the same layout (catalog-*.yml + data/<shelf>/<book>/...)
+# as the upstream refractiveindex.info database, so no further changes needed.
+_BUNDLED_DB = Path(__file__).resolve().parent / "db"
+_SYSTEM_DB  = Path(ri._DEFAULT_DB_PATH)
+if (_BUNDLED_DB / "catalog-nk.yml").exists():
+    DB_PATH = _BUNDLED_DB
+    _DB_SOURCE = "bundled (./db)"
+else:
+    DB_PATH = _SYSTEM_DB
+    _DB_SOURCE = f"system ({ri._DEFAULT_DB_PATH})"
+
+# Local database(s) (Pu: J. Appl. Phys. 125, 183102 - Appendices B & C,
+# Sc: Sigrist 1987 + Henke 1993, etc.). The GUI auto-discovers any
+# `catalog-*.yml` file in LOCAL_DB_PATH and merges it into CAT_NK. Add a
+# new material by dropping a shelf directory under LOCAL_DB_PATH/ and
+# creating a matching catalog-*.yml that points at it.
+LOCAL_DB_PATH = Path(__file__).resolve().parent / "pu_data" / "db"
+
+# ════════════════════════════════════════════════════════════
+# Database loading
+# ════════════════════════════════════════════════════════════
+def _load_yaml(name, base=None):
+    if base is None:
+        base = DB_PATH
+    with open(base / name, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+CAT_NK = _load_yaml("catalog-nk.yml")
+
+# Merge all local catalog-*.yml files into CAT_NK. This lets us add new
+# materials (Sc, future metals, alloys, ...) by dropping a shelf folder
+# under LOCAL_DB_PATH and writing a matching catalog-<name>.yml -- no
+# GUI changes needed.
+if LOCAL_DB_PATH.exists():
+    for catalog_file in sorted(LOCAL_DB_PATH.glob("catalog-*.yml")):
+        try:
+            local_catalog = _load_yaml(catalog_file.name, base=LOCAL_DB_PATH)
+        except Exception as exc:
+            print(f"[nk_GUI] WARN: failed to load {catalog_file.name}: {exc}")
+            continue
+        CAT_NK.extend(local_catalog)
+        n_pages = sum(
+            1
+            for shelf in local_catalog
+            for book in shelf.get("content", [])
+            if "BOOK" in book
+            for page in book.get("content", [])
+            if "PAGE" in page
+        )
+        print(f"[nk_GUI] Loaded local catalog: {catalog_file.name} "
+              f"({n_pages} page(s))")
+
+def _build_index(catalog, local_base=None, local_shelves=()):
+    idx = {}
+    for shelf in catalog:
+        if "SHELF" not in shelf:
+            continue
+        sid = shelf["SHELF"]
+        is_local = local_base is not None and sid in local_shelves
+        for book in shelf.get("content", []):
+            if "BOOK" not in book:
+                continue
+            bid = book["BOOK"]
+            for page in book.get("content", []):
+                if "PAGE" not in page:
+                    continue
+                pid = page["PAGE"]
+                data_path = page["data"]
+                # Local DB entries have their own base; system entries use DB_PATH/data/
+                if is_local:
+                    idx[(sid, bid, pid)] = LOCAL_DB_PATH / data_path
+                else:
+                    idx[(sid, bid, pid)] = DB_PATH / "data" / data_path
+    return idx
+
+
+# Collect shelf IDs that originated from any local catalog-*.yml so the
+# index builder knows where to look for their data files. CAT_NK is the
+# merged system + local catalog; we re-derive local_shelves from the
+# local_catalogs we already loaded (if any).
+_LOCAL_SHELVES: set[str] = set()
+if LOCAL_DB_PATH.exists():
+    _LOCAL_SHELVES = {
+        shelf["SHELF"]
+        for catalog_file in LOCAL_DB_PATH.glob("catalog-*.yml")
+        for shelf in _load_yaml(catalog_file.name, base=LOCAL_DB_PATH)
+        if "SHELF" in shelf
+    }
+
+INDEX_NK = _build_index(CAT_NK, LOCAL_DB_PATH, _LOCAL_SHELVES)
+
+def _extract_entries(catalog):
+    entries = []
+    for shelf in catalog:
+        if "SHELF" not in shelf:
+            continue
+        sid, sname = shelf["SHELF"], shelf["name"]
+        for book in shelf.get("content", []):
+            if "BOOK" not in book:
+                continue
+            bid, bname = book["BOOK"], book["name"]
+            for page in book.get("content", []):
+                if "PAGE" not in page:
+                    continue
+                entries.append((sid, sname, bid, bname, page["PAGE"], page["name"]))
+    return entries
+
+ENTRIES = _extract_entries(CAT_NK)
+
+def _build_tree(entries):
+    tree = {}
+    for sid, sname, bid, bname, pid, pname in entries:
+        tree.setdefault(sid, {"_name": sname, "_books": {}})
+        tree[sid]["_books"].setdefault(bid, {"_name": bname, "_pages": []})
+        tree[sid]["_books"][bid]["_pages"].append((pid, pname))
+    return tree
+
+TREE = _build_tree(ENTRIES)
+
+_HTML = re.compile(r"<[^>]+>")
+def _strip(t):
+    return _HTML.sub("", t) if t else ""
+
+
+# ════════════════════════════════════════════════════════════
+# Material data loader
+# ════════════════════════════════════════════════════════════
+def _load_material_data(shelf, book, page):
+    key = (shelf, book, page)
+    if key not in INDEX_NK:
+        raise KeyError(f"Material not found: {key}")
+
+    with open(INDEX_NK[key], "r", encoding="utf-8") as f:
+        mat = yaml.safe_load(f)
+
+    n_func = k_func = None
+    wl_range = None
+
+    for data in mat.get("DATA", []):
+        dtype = data.get("type", "").split()
+        cat, sub = dtype[0], dtype[1] if len(dtype) > 1 else None
+
+        if cat == "tabulated":
+            wl_list, c1_list, c2_list = [], [], []
+            for line in data["data"].strip().split("\n"):
+                p = line.split()
+                wl_list.append(float(p[0]))
+                c1_list.append(float(p[1]))
+                c2_list.append(float(p[2]) if len(p) > 2 else None)
+            wl_um = np.array(wl_list)
+            c1 = np.array(c1_list)
+            c2 = np.array([x for x in c2_list if x is not None])
+
+            mk_i = lambda y: interp1d(wl_um, y, kind="cubic", bounds_error=False,
+                                      fill_value=(y[0], y[-1]))
+            if sub == "n":
+                n_func = mk_i(c1)
+                wl_range = (wl_um[0] * 1000, wl_um[-1] * 1000)
+            elif sub == "k":
+                k_func = mk_i(c1)
+                wl_range = (wl_um[0] * 1000, wl_um[-1] * 1000)
+            elif sub == "nk":
+                n_func = mk_i(c1)
+                k_func = mk_i(c2)
+                wl_range = (wl_um[0] * 1000, wl_um[-1] * 1000)
+
+        elif cat == "formula":
+            fid = int(sub)
+            coeffs = [float(x) for x in data["coefficients"].split()]
+            for rk in ("range", "wavelength_range"):
+                if rk in data:
+                    break
+            rm, rM = [float(x) for x in data[rk].split()]
+            wl_range = (rm * 1000, rM * 1000)
+            n_func = lambda w, f=fid, c=coeffs: ri._compute_formula(f, c, w)
+
+    if wl_range is None:
+        raise ValueError(f"No wavelength range for {key}")
+
+    wl_nm = np.linspace(wl_range[0], wl_range[1], 800)
+    wl_um = wl_nm / 1000.0
+    n = np.asarray(n_func(wl_um)) if n_func else np.zeros_like(wl_nm)
+    k = np.asarray(k_func(wl_um)) if k_func else np.zeros_like(wl_nm)
+    return wl_nm, n, k
+
+
+# ════════════════════════════════════════════════════════════
+# Rubber-band zoom manager (left button) — per-axis
+# ════════════════════════════════════════════════════════════
+class _ZoomManager:
+    def __init__(self, ax, on_zoom):
+        self.ax = ax
+        self.on_zoom = on_zoom
+        self._drag_start = None
+        self._artists = []
+
+        canvas = ax.figure.canvas
+        canvas.mpl_connect("button_press_event",   self._on_press)
+        canvas.mpl_connect("motion_notify_event",  self._on_motion)
+        canvas.mpl_connect("button_release_event", self._on_release)
+
+    def _xy_from_event(self, event):
+        if event.inaxes is not None and event.inaxes is self.ax:
+            xy = self.ax.transData.inverted().transform((event.x, event.y))
+            return xy[0], xy[1]
+        return None
+
+    def _draw_rect(self, x0, y0, x1, y1):
+        ax = self.ax
+        for a in self._artists:
+            a.remove()
+        self._artists.clear()
+
+        x, y = min(x0, x1), min(y0, y1)
+        w, h = abs(x1 - x0), abs(y1 - y0)
+        xr = ax.get_xlim()[1] - ax.get_xlim()[0]
+        yr = ax.get_ylim()[1] - ax.get_ylim()[0]
+        if w < xr * 0.01 or h < yr * 0.01:
+            return
+
+        rect = matplotlib.patches.Rectangle(
+            (x, y), w, h,
+            linewidth=1.2, edgecolor=ACCENT, facecolor=ACCENT,
+            alpha=0.15, zorder=10, transform=ax.transData)
+        ax.add_patch(rect)
+        self._artists.append(rect)
+
+        for xp in (x, x + w):
+            l, = ax.plot([xp, xp], [y, y + h], color=ACCENT,
+                         lw=0.8, ls="--", alpha=0.6, zorder=10)
+            self._artists.append(l)
+        for yp in (y, y + h):
+            l, = ax.plot([x, x + w], [yp, yp], color=ACCENT,
+                         lw=0.8, ls="--", alpha=0.6, zorder=10)
+            self._artists.append(l)
+
+        ax.figure.canvas.draw_idle()
+
+    def _on_press(self, event):
+        if event.button != 1 or event.inaxes is None or event.inaxes is not self.ax:
+            return
+        self._drag_start = self._xy_from_event(event)
+
+    def _on_motion(self, event):
+        if self._drag_start is None:
+            return
+        if event.inaxes is not self.ax:
+            return
+        xy = self._xy_from_event(event)
+        if xy is None:
+            return
+        self._draw_rect(self._drag_start[0], self._drag_start[1], xy[0], xy[1])
+
+    def _on_release(self, event):
+        if self._drag_start is None or event.button != 1:
+            return
+
+        xy = self._xy_from_event(event)
+        for a in self._artists:
+            a.remove()
+        self._artists.clear()
+        self.ax.figure.canvas.draw_idle()
+
+        x0, y0 = self._drag_start
+        self._drag_start = None
+
+        if xy is None:
+            return
+
+        x1, y1 = xy[0], xy[1]
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        x_range = self.ax.get_xlim()
+        y_range = self.ax.get_ylim()
+        if dx < (x_range[1] - x_range[0]) * 0.01 or dy < (y_range[1] - y_range[0]) * 0.01:
+            return
+
+        self.on_zoom(self.ax, min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1))
+
+
+# ════════════════════════════════════════════════════════════
+# Pan manager (right button drag) — per-axis
+# ════════════════════════════════════════════════════════════
+class _PanManager:
+    def __init__(self, ax):
+        self.ax = ax
+        self._drag_start = None
+        self._xlim_start = None
+        self._ylim_start = None
+
+        canvas = ax.figure.canvas
+        canvas.mpl_connect("button_press_event",   self._on_press)
+        canvas.mpl_connect("motion_notify_event",  self._on_motion)
+        canvas.mpl_connect("button_release_event", self._on_release)
+
+    def _on_press(self, event):
+        if event.button != 3 or event.inaxes is None or event.inaxes is not self.ax:
+            return
+        self._drag_start = (event.x, event.y)
+        self._xlim_start = self.ax.get_xlim()
+        self._ylim_start = self.ax.get_ylim()
+
+    def _on_motion(self, event):
+        if self._drag_start is None or event.inaxes is None or event.inaxes is not self.ax:
+            return
+
+        ax = self.ax
+        dx_data = ax.transData.inverted().transform(
+            (event.x, event.y))[0] - ax.transData.inverted().transform(
+            self._drag_start)[0]
+        dy_data = ax.transData.inverted().transform(
+            (event.x, event.y))[1] - ax.transData.inverted().transform(
+            self._drag_start)[1]
+        ax.set_xlim(self._xlim_start[0] - dx_data, self._xlim_start[1] - dx_data)
+        ax.set_ylim(self._ylim_start[0] - dy_data, self._ylim_start[1] - dy_data)
+        ax.figure.canvas.draw_idle()
+
+    def _on_release(self, event):
+        if event.button != 3:
+            return
+        self._drag_start = None
+        self._xlim_start = None
+        self._ylim_start = None
+
+
+# ════════════════════════════════════════════════════════════
+# Helpers
+# ════════════════════════════════════════════════════════════
+WL_TO_EN = lambda wl: 1240.0 / wl
+EN_TO_WL = lambda en: 1240.0 / en
+
+# ════════════════════════════════════════════════════════════
+# Main GUI
+# ════════════════════════════════════════════════════════════
+class NkCurveGUI:
+
+    XAXIS_MODES  = ["wavelength", "energy"]
+    XAXIS_LABELS = {"wavelength": "Wavelength (nm)", "energy": "Photon Energy (eV)"}
+    PLOT_MODES   = ["nk", "eps"]
+
+    def __init__(self, root):
+        self.root = root
+        root.title(f"nk Curve Viewer v0.5.1 — refractiveindex.info ({_DB_SOURCE})")
+        root.geometry("1200x900")
+        root.minsize(1000, 650)
+        root.state("zoomed")   # start maximized
+        root.configure(bg=BG)
+
+        self.wavelengths = self.n_vals = self.k_vals = None
+        self.material_label = ""
+        self._interp_n = self._interp_k = None
+
+        # Internal x range stored in nanometers (wl space)
+        self._xmin_wl = None
+        self._xmax_wl = None
+
+        # Stored y ranges for each plot (used as "last known" for sync)
+        self._ymin_nk  = None
+        self._ymax_nk  = None
+        self._ymin_eps = None
+        self._ymax_eps = None
+
+        # X log scale — shared across both plots
+        self._xlog = False
+
+        # Suppress sync-to-entries during _update_plot (prevents Apply overwriting user input)
+        self._suppress_sync_to_entries = False
+
+        self._style()
+        self._build_ui()
+        self._update_plot()
+
+    def _style(self):
+        s = ttk.Style()
+        s.theme_use("clam")
+        s.configure("Treeview", background=ENTRY_BG, foreground=FG,
+                    fieldbackground=ENTRY_BG, rowheight=22)
+        s.configure("Treeview.Heading", background=SEL_BG, foreground=FG,
+                    font=("Arial", 10, "bold"))
+        s.map("Treeview", background=[("selected", SEL_BG)],
+              foreground=[("selected", SEL_FG)])
+
+    def _build_ui(self):
+        paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        paned.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+
+        left = ttk.Frame(paned)
+        paned.add(left, weight=0)
+        self._build_left(left)
+
+        right = ttk.Frame(paned)
+        paned.add(right, weight=1)
+        self._build_right(right)
+
+    def _build_left(self, parent):
+        ttk.Label(parent, text=f"NK Catalog: {len(ENTRIES)} entries",
+                  foreground="gray", font=("Arial", 9)).pack(fill="x", pady=(0, 6))
+
+        # Search
+        sf = ttk.Frame(parent)
+        sf.pack(fill="x", pady=(0, 4))
+        ttk.Label(sf, text="Search:").pack(side="left")
+        self.search_var = tk.StringVar()
+        ttk.Entry(sf, textvariable=self.search_var).pack(
+            side="left", fill="x", expand=True, padx=(4, 0))
+        self.search_var.trace("w", lambda *_: self._populate_tree(self.search_var.get()))
+
+        # Tree
+        tf = ttk.Frame(parent)
+        tf.pack(fill="both", expand=True, pady=(0, 6))
+
+        self.tree = ttk.Treeview(tf, columns=("name",), show="tree headings",
+                                 selectmode="browse")
+        self.tree.heading("#0", text="Path")
+        self.tree.heading("name", text="Name")
+        self.tree.column("#0", width=155)
+        self.tree.column("name", width=260)
+
+        vsb = ttk.Scrollbar(tf, orient="vertical", command=self.tree.yview)
+        hsb = ttk.Scrollbar(tf, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        tf.rowconfigure(0, weight=1)
+        tf.columnconfigure(0, weight=1)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+
+        # ── Active Plot Selector ──────────────────────────
+        pf = ttk.LabelFrame(parent, text=" Active Plot ", padding=(8, 4))
+        pf.pack(fill="x", pady=(0, 4))
+
+        self.active_plot = tk.StringVar(value="nk")
+        ttk.Radiobutton(pf, text="Refractive Index (n, k)",
+                        variable=self.active_plot, value="nk",
+                        command=self._on_active_plot_changed).pack(anchor="w")
+        ttk.Radiobutton(pf, text="Dielectric Function (ε1, ε2)",
+                        variable=self.active_plot, value="eps",
+                        command=self._on_active_plot_changed).pack(anchor="w")
+
+        # ── Options ───────────────────────────────────────
+        of = ttk.LabelFrame(parent, text=" Options ", padding=(8, 4))
+        of.pack(fill="x", pady=(0, 4))
+
+        ttk.Label(of, text="X-Axis:").pack(anchor="w")
+        self.xaxis_var = tk.StringVar(value="wavelength")
+        for m in self.XAXIS_MODES:
+            ttk.Radiobutton(of, text=self.XAXIS_LABELS[m],
+                            variable=self.xaxis_var, value=m,
+                            command=self._on_xaxis_changed).pack(anchor="w", padx=8)
+
+        # Log X — shared
+        self.xlog_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(of, text="Log X", variable=self.xlog_var,
+                        command=self._on_xlog_changed).pack(anchor="w")
+
+        ttk.Separator(of, orient="horizontal").pack(fill="x", pady=6)
+
+        # X range — shared (both plots use same x)
+        xr = ttk.Frame(of)
+        xr.pack(fill="x")
+        ttk.Label(xr, text="X Min:").grid(row=0, column=0, sticky="e")
+        self.xmin = tk.StringVar()
+        ttk.Entry(xr, textvariable=self.xmin, width=9).grid(
+            row=0, column=1, padx=(4, 8))
+        ttk.Label(xr, text="X Max:").grid(row=0, column=2, sticky="e")
+        self.xmax = tk.StringVar()
+        ttk.Entry(xr, textvariable=self.xmax, width=9).grid(
+            row=0, column=3, padx=(4, 0))
+
+        # Y range — label updates with active plot
+        self.yr_label = ttk.Label(of, text="Y Min (n,k):")
+        self.yr_label.pack(anchor="w")
+
+        yr = ttk.Frame(of)
+        yr.pack(fill="x")
+        ttk.Label(yr, text="Y Min:").grid(row=0, column=0, sticky="e")
+        self.ymin = tk.StringVar()
+        ttk.Entry(yr, textvariable=self.ymin, width=9).grid(
+            row=0, column=1, padx=(4, 8))
+        ttk.Label(yr, text="Y Max:").grid(row=0, column=2, sticky="e")
+        self.ymax = tk.StringVar()
+        ttk.Entry(yr, textvariable=self.ymax, width=9).grid(
+            row=0, column=3, padx=(4, 0))
+
+        # Log Y — per plot
+        self.ylog_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(of, text="Log Y (active plot)", variable=self.ylog_var,
+                        command=self._on_ylog_changed).pack(anchor="w")
+
+        btn_row = ttk.Frame(of)
+        btn_row.pack(fill="x", pady=(4, 0))
+        ttk.Button(btn_row, text="Apply", command=self._update_plot).pack(
+            side="left", fill="x", expand=True)
+        ttk.Button(btn_row, text="Reset Active",
+                   command=self._reset_active_range).pack(
+            side="left", fill="x", expand=True, padx=(4, 0))
+
+        # ── Query ─────────────────────────────────────────
+        qf = ttk.LabelFrame(parent, text=" Query n / k ", padding=(8, 4))
+        qf.pack(fill="x", pady=(0, 4))
+
+        qinput = ttk.Frame(qf)
+        qinput.pack(fill="x")
+        self.query_var = tk.StringVar()
+        ttk.Entry(qinput, textvariable=self.query_var, width=10).grid(
+            row=0, column=0, padx=(0, 4))
+        self.xaxis_q = tk.StringVar(value="nm")
+        ttk.Radiobutton(qinput, text="nm", variable=self.xaxis_q,
+                        value="nm").grid(row=0, column=1)
+        ttk.Radiobutton(qinput, text="eV", variable=self.xaxis_q,
+                        value="eV").grid(row=0, column=2)
+        ttk.Button(qinput, text="Query", command=self._query_nk).grid(
+            row=0, column=3, padx=(4, 0))
+
+        self.query_result = ttk.Label(qf, text="", foreground=ACCENT,
+                                      font=("Arial", 9))
+        self.query_result.pack(fill="x", pady=(2, 0))
+        self.query_result2 = ttk.Label(qf, text="", foreground=ACCENT,
+                                       font=("Arial", 9))
+        self.query_result2.pack(fill="x")
+
+        # Status
+        self.info = ttk.Label(parent, text="Select a material",
+                              foreground="gray", font=("Arial", 9))
+        self.info.pack(fill="x", pady=(0, 4))
+
+        ttk.Button(parent, text="Export CSV", command=self._export).pack(fill="x")
+
+        self._populate_tree()
+
+    def _build_right(self, parent):
+        self.hint = ttk.Label(parent,
+                              text="Drag to zoom  ·  Right-click to pan  ·  Scroll to zoom  ·  Click tab to switch active plot",
+                              font=("Arial", 8), foreground="gray")
+        self.hint.pack(fill="x", pady=(0, 4))
+
+        # ── Refractive Index frame ────────────────────────
+        self.frame_nk = ttk.LabelFrame(parent, text=" Refractive Index (n, k) ",
+                                       padding=(4, 2))
+        self.frame_nk.pack(fill="both", expand=True, pady=(0, 4))
+        self.lbl_nk = ttk.Label(self.frame_nk, text="", font=("Arial", 8),
+                                foreground=ACCENT, padding=(2, 0))
+        # Pack label at top of frame before canvas
+        self.lbl_nk.pack(fill="x", padx=(6, 6), pady=(2, 0))
+
+        self.fig_nk = Figure(figsize=(8, 4.2), dpi=110,
+                             facecolor=BG, edgecolor=BG)
+        self.canvas_nk = FigureCanvasTkAgg(self.fig_nk, master=self.frame_nk)
+        self.canvas_nk.get_tk_widget().pack(fill="both", expand=True)
+        self.ax_nk = self.fig_nk.add_subplot(111)
+        self.fig_nk.subplots_adjust(left=0.09, right=0.88, bottom=0.12, top=0.92)
+
+        self.canvas_nk.mpl_connect("scroll_event", self._on_scroll_nk)
+        self._zoom_nk = _ZoomManager(self.ax_nk, on_zoom=self._apply_zoom_nk)
+        self._pan_nk  = _PanManager(self.ax_nk)
+
+        # ── Dielectric Function frame ─────────────────────
+        self.frame_eps = ttk.LabelFrame(parent, text=" Dielectric Function (ε1, ε2) ",
+                                        padding=(4, 2))
+        self.frame_eps.pack(fill="both", expand=True)
+        self.lbl_eps = ttk.Label(self.frame_eps, text="", font=("Arial", 8),
+                                 foreground=ACCENT, padding=(2, 0))
+        self.lbl_eps.pack(fill="x", padx=(6, 6), pady=(2, 0))
+
+        self.fig_eps = Figure(figsize=(8, 4.2), dpi=110,
+                              facecolor=BG, edgecolor=BG)
+        self.canvas_eps = FigureCanvasTkAgg(self.fig_eps, master=self.frame_eps)
+        self.canvas_eps.get_tk_widget().pack(fill="both", expand=True)
+        self.ax_eps = self.fig_eps.add_subplot(111)
+        self.fig_eps.subplots_adjust(left=0.09, right=0.88, bottom=0.12, top=0.92)
+
+        self.canvas_eps.mpl_connect("scroll_event", self._on_scroll_eps)
+        self._zoom_eps = _ZoomManager(self.ax_eps, on_zoom=self._apply_zoom_eps)
+        self._pan_eps  = _PanManager(self.ax_eps)
+
+    # ════════════════════════════════════════════════════════
+    # Tree
+    # ════════════════════════════════════════════════════════
+    def _populate_tree(self, query=""):
+        tree = self.tree
+        tree.delete(*tree.get_children())
+        q = query.lower().strip()
+
+        def match(t):
+            return not q or q in t.lower()
+
+        if q:
+            matching_pages = set()
+            for sid in TREE:
+                if sid == "_name":
+                    continue
+                for bid in TREE[sid]["_books"]:
+                    if bid == "_name":
+                        continue
+                    for pid, pname in TREE[sid]["_books"][bid]["_pages"]:
+                        if match(_strip(pname)) or match(pid):
+                            matching_pages.add((sid, bid, pid))
+            matching_shelves = {(s, b) for s, b, _ in matching_pages}
+            matching_books   = {s for s, _, _ in matching_pages}
+        else:
+            matching_pages   = None
+            matching_shelves = None
+            matching_books   = None
+
+        for sid in TREE:
+            if sid == "_name":
+                continue
+            sname = _strip(TREE[sid]["_name"])
+            if q and sid not in matching_books:
+                continue
+
+            si = tree.insert("", "end", text=sid, values=(sname,))
+
+            for bid in TREE[sid]["_books"]:
+                if bid == "_name":
+                    continue
+                bname = _strip(TREE[sid]["_books"][bid]["_name"])
+                if q and (sid, bid) not in matching_shelves:
+                    continue
+
+                bi = tree.insert(si, "end", text=bid, values=(bname,))
+
+                for pid, pname in TREE[sid]["_books"][bid]["_pages"]:
+                    full_pname = _strip(pname)
+                    if q and (sid, bid, pid) not in matching_pages:
+                        continue
+                    tree.insert(bi, "end", text=pid, values=(full_pname,))
+
+        if tree.get_children():
+            tree.item(tree.get_children()[0], open=True)
+
+    def _on_select(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        if self.tree.get_children(iid):
+            return
+        book_iid  = self.tree.parent(iid)
+        shelf_iid = self.tree.parent(book_iid)
+        shelf = self.tree.item(shelf_iid, "text")
+        book  = self.tree.item(book_iid, "text")
+        page  = self.tree.item(iid, "text")
+        self._load(shelf, book, page)
+
+    # ════════════════════════════════════════════════════════
+    # Load material
+    # ════════════════════════════════════════════════════════
+    def _load(self, shelf, book, page):
+        try:
+            wl, n, k = _load_material_data(shelf, book, page)
+            self.wavelengths = wl
+            self.n_vals = n
+            self.k_vals = k
+
+            self._interp_n = interp1d(wl, n, kind="cubic",
+                                      bounds_error=False, fill_value=(n[0], n[-1]))
+            self._interp_k = interp1d(wl, k, kind="cubic",
+                                      bounds_error=False, fill_value=(k[0], k[-1]))
+
+            self._xmin_wl = float(wl.min())
+            self._xmax_wl = float(wl.max())
+
+            bid = None
+            for si in self.tree.get_children():
+                for bi in self.tree.get_children(si):
+                    if self.tree.item(bi, "text") == book:
+                        bid = bi
+                        break
+            bname = self.tree.item(bid, "values")[0] if bid else book
+            self.material_label = f"{_strip(bname)} — {page}"
+            # Update entry info labels in right-side LabelFrames
+            self.lbl_nk.config(text=self.material_label)
+            self.lbl_eps.config(text=self.material_label)
+            self.info.config(
+                text=f"Loaded: {shelf} / {book} / {page}\n"
+                     f"Range: {wl[0]:.1f} – {wl[-1]:.1f} nm")
+            self.query_result.config(text="")
+            self.query_result2.config(text="")
+        except Exception as ex:
+            self.info.config(text=f"Error: {type(ex).__name__}: {ex}")
+            self.lbl_nk.config(text="")
+            self.lbl_eps.config(text="")
+            self.wavelengths = self.n_vals = self.k_vals = None
+            self._interp_n = self._interp_k = None
+            self._xmin_wl = self._xmax_wl = None
+
+        self._update_plot()
+
+    # ════════════════════════════════════════════════════════
+    # Active plot switch — sync entry widgets from current plot state
+    # ════════════════════════════════════════════════════════
+    def _on_active_plot_changed(self):
+        self._sync_entries_from_active_plot()
+        self._update_plot()
+
+    def _sync_entries_from_active_plot(self):
+        """Pull current axis limits from the active plot into entry widgets."""
+        active = self.active_plot.get()
+        xmode = self.xaxis_var.get()
+
+        if active == "nk":
+            ax = self.ax_nk
+            self.yr_label.config(text="Y Min (n,k):")
+        else:
+            ax = self.ax_eps
+            self.yr_label.config(text="Y Min (ε):")
+
+        # X entries — from active plot's x axis (shared, but use active for consistency)
+        xlo, xhi = ax.get_xlim()
+        if xmode == "energy":
+            self.xmin.set(f"{xhi:.4g}")
+            self.xmax.set(f"{xlo:.4g}")
+        else:
+            self.xmin.set(f"{xlo:.4g}")
+            self.xmax.set(f"{xhi:.4g}")
+
+        # Y entries
+        ylo, yhi = ax.get_ylim()
+        self.ymin.set(f"{ylo:.4g}")
+        self.ymax.set(f"{yhi:.4g}")
+
+        # Log Y
+        self.ylog_var.set(ylog_get(ax))
+
+    def _sync_active_plot_from_entries(self):
+        """Push entry widget values into the active plot's axis limits."""
+        active = self.active_plot.get()
+        xmode = self.xaxis_var.get()
+
+        if active == "nk":
+            ax = self.ax_nk
+            def_lo = float(self.n_vals.min() - 0.1) if self.n_vals is not None else None
+            def_hi = float(self.n_vals.max() + 0.5) if self.n_vals is not None else None
+        else:
+            ax = self.ax_eps
+            if self.n_vals is not None and self.k_vals is not None:
+                eps1 = self.n_vals**2 - self.k_vals**2
+                eps2 = 2 * self.n_vals * self.k_vals
+                v_lo = min(float(eps1.min()), float(eps2.min()), 0.0)
+                v_hi = max(float(eps1.max()), float(eps2.max()), 0.0)
+                span = v_hi - v_lo
+                def_lo = v_lo - span * 0.02
+                def_hi = v_hi + span * 0.02
+            else:
+                def_lo = def_hi = None
+
+        # X range
+        try:
+            cur_xmin = float(self.xmin.get().strip()) if self.xmin.get().strip() else None
+            cur_xmax = float(self.xmax.get().strip()) if self.xmax.get().strip() else None
+        except ValueError:
+            cur_xmin = cur_xmax = None
+
+        # X range — apply individually (allow partial entry)
+        try:
+            cur_xmin_v = float(self.xmin.get().strip()) if self.xmin.get().strip() else None
+            cur_xmax_v = float(self.xmax.get().strip()) if self.xmax.get().strip() else None
+        except ValueError:
+            cur_xmin_v = cur_xmax_v = None
+
+        if cur_xmin_v is not None and cur_xmax_v is not None:
+            ax.set_xlim(cur_xmin_v, cur_xmax_v)
+        elif cur_xmin_v is not None:
+            # Only xmin set — adjust lower bound, keep upper
+            xlo, xhi = ax.get_xlim()
+            ax.set_xlim(cur_xmin_v, xhi)
+        elif cur_xmax_v is not None:
+            # Only xmax set — adjust upper bound, keep lower
+            xlo, xhi = ax.get_xlim()
+            ax.set_xlim(xlo, cur_xmax_v)
+
+        # Y range — apply individually (allow partial entry)
+        try:
+            cur_ymin_v = float(self.ymin.get().strip()) if self.ymin.get().strip() else None
+            cur_ymax_v = float(self.ymax.get().strip()) if self.ymax.get().strip() else None
+        except ValueError:
+            cur_ymin_v = cur_ymax_v = None
+
+        if cur_ymin_v is not None and cur_ymax_v is not None:
+            ax.set_ylim(cur_ymin_v, cur_ymax_v)
+        elif cur_ymin_v is not None:
+            ylo, yhi = ax.get_ylim()
+            ax.set_ylim(cur_ymin_v, yhi)
+        elif cur_ymax_v is not None:
+            ylo, yhi = ax.get_ylim()
+            ax.set_ylim(ylo, cur_ymax_v)
+
+        # Log Y
+        ylog = self.ylog_var.get()
+        ylog_set(ax, ylog)
+
+        if active == "nk":
+            self._ymin_nk, self._ymax_nk = ax.get_ylim()
+        else:
+            self._ymin_eps, self._ymax_eps = ax.get_ylim()
+
+    # ════════════════════════════════════════════════════════
+    # X-axis mode switch
+    # ════════════════════════════════════════════════════════
+    def _on_xaxis_changed(self):
+        xmode = self.xaxis_var.get()
+
+        try:
+            cur_xmin = float(self.xmin.get().strip()) if self.xmin.get().strip() else None
+            cur_xmax = float(self.xmax.get().strip()) if self.xmax.get().strip() else None
+        except ValueError:
+            cur_xmin = cur_xmax = None
+
+        if cur_xmin is not None and cur_xmax is not None:
+            if xmode == "energy":
+                wl_min = EN_TO_WL(cur_xmin)
+                wl_max = EN_TO_WL(cur_xmax)
+            else:
+                wl_min, wl_max = cur_xmin, cur_xmax
+
+            self._xmin_wl = wl_min
+            self._xmax_wl = wl_max
+
+            if xmode == "energy":
+                self.xmin.set(f"{WL_TO_EN(wl_max):.4g}")
+                self.xmax.set(f"{WL_TO_EN(wl_min):.4g}")
+            else:
+                self.xmin.set(f"{wl_min:.4g}")
+                self.xmax.set(f"{wl_max:.4g}")
+
+        self._update_plot()
+
+    def _on_xlog_changed(self):
+        self._xlog = self.xlog_var.get()
+        self._update_plot()
+
+    def _on_ylog_changed(self):
+        self._update_plot()
+
+    # ════════════════════════════════════════════════════════
+    # Reset active plot range
+    # ════════════════════════════════════════════════════════
+    def _reset_active_range(self):
+        active = self.active_plot.get()
+        self.xmin.set("")
+        self.xmax.set("")
+        self.ymin.set("")
+        self.ymax.set("")
+        self.ylog_var.set(False)
+        if self.wavelengths is not None:
+            self._xmin_wl = float(self.wavelengths.min())
+            self._xmax_wl = float(self.wavelengths.max())
+        if active == "nk":
+            self._ymin_nk = self._ymax_nk = None
+        else:
+            self._ymin_eps = self._ymax_eps = None
+        self._update_plot()
+
+    # ════════════════════════════════════════════════════════
+    # Query
+    # ════════════════════════════════════════════════════════
+    def _query_nk(self):
+        if self.wavelengths is None:
+            self.query_result.config(text="No material loaded.")
+            return
+
+        try:
+            val = float(self.query_var.get().strip())
+        except ValueError:
+            self.query_result.config(text="Enter a number (nm or eV).")
+            return
+
+        mode = self.xaxis_q.get()
+        if mode == "eV":
+            wl_q = EN_TO_WL(val)
+            label = f"{val:.4f} eV -> {wl_q:.2f} nm"
+        else:
+            wl_q = val
+            en_q = WL_TO_EN(val)
+            label = f"{val:.4f} nm -> {en_q:.4f} eV"
+
+        if wl_q < self.wavelengths.min() or wl_q > self.wavelengths.max():
+            self.query_result.config(
+                text=f"{label}  |  n=—, k=— (out of range)", foreground="#fab387")
+            return
+
+        n_q = float(self._interp_n(wl_q))
+        k_q = float(self._interp_k(wl_q))
+        eps1_q = n_q**2 - k_q**2
+        eps2_q = 2*n_q*k_q
+        self.query_result.config(
+            text=f"{label}  |  n = {n_q:.5f}  |  k = {k_q:.5f}",
+            foreground=ACCENT)
+        self.query_result2.config(
+            text=f"ε1 = {eps1_q:.4f}  |  ε2 = {eps2_q:.4f}",
+            foreground=ACCENT)
+
+    # ════════════════════════════════════════════════════════
+    # Scroll zoom — per plot
+    # ════════════════════════════════════════════════════════
+    def _on_scroll_nk(self, event):
+        if event.inaxes is not self.ax_nk:
+            return
+        self._do_scroll(self.ax_nk, event)
+
+    def _on_scroll_eps(self, event):
+        if event.inaxes is not self.ax_eps:
+            return
+        self._do_scroll(self.ax_eps, event)
+
+    def _do_scroll(self, ax, event):
+        factor = 1.15 if event.step > 0 else 1.0 / 1.15
+        xc, _ = ax.transData.inverted().transform((event.x, event.y))
+        xlo, xhi = ax.get_xlim()
+        ax.set_xlim(xc - (xc - xlo) * factor, xc + (xhi - xc) * factor)
+        ylo, yhi = ax.get_ylim()
+        yctr = (ylo + yhi) / 2.0
+        ax.set_ylim(yctr - (yctr - ylo) * factor,
+                    yctr + (yhi - yctr) * factor)
+
+        # Always sync: zoomed plot becomes active, left panel shows its range
+        self._sync_x_entries_from_ax(ax)
+        self._sync_y_entries_from_ax(ax)
+
+        ax.figure.canvas.draw_idle()
+
+    def _active_ax(self):
+        return self.ax_nk if self.active_plot.get() == "nk" else self.ax_eps
+
+    def _apply_zoom_nk(self, ax, xlo, xhi, ylo, yhi):
+        ax.set_xlim(xlo, xhi)
+        ax.set_ylim(ylo, yhi)
+        self._sync_x_entries_from_ax(ax)
+        self._sync_y_entries_from_ax(ax)
+        self.canvas_nk.draw_idle()
+
+    def _apply_zoom_eps(self, ax, xlo, xhi, ylo, yhi):
+        ax.set_xlim(xlo, xhi)
+        ax.set_ylim(ylo, yhi)
+        self._sync_x_entries_from_ax(ax)
+        self._sync_y_entries_from_ax(ax)
+        self.canvas_eps.draw_idle()
+
+    def _sync_x_entries_from_ax(self, ax):
+        if self._suppress_sync_to_entries:
+            return
+        xlo, xhi = ax.get_xlim()
+        xmode = self.xaxis_var.get()
+        if xmode == "energy":
+            self.xmin.set(f"{xhi:.4g}")
+            self.xmax.set(f"{xlo:.4g}")
+        else:
+            self.xmin.set(f"{xlo:.4g}")
+            self.xmax.set(f"{xhi:.4g}")
+        if xmode == "wavelength":
+            self._xmin_wl = xlo
+            self._xmax_wl = xhi
+        else:
+            self._xmin_wl = EN_TO_WL(xhi)
+            self._xmax_wl = EN_TO_WL(xlo)
+        # Update active plot indicator if needed
+        if ax is self.ax_nk and self.active_plot.get() != "nk":
+            self.active_plot.set("nk")
+            self.yr_label.config(text="Y Min (n,k):")
+        elif ax is self.ax_eps and self.active_plot.get() != "eps":
+            self.active_plot.set("eps")
+            self.yr_label.config(text="Y Min (ε):")
+
+    def _sync_y_entries_from_ax(self, ax):
+        ylo, yhi = ax.get_ylim()
+        self.ymin.set(f"{ylo:.4g}")
+        self.ymax.set(f"{yhi:.4g}")
+        if ax is self.ax_nk:
+            self._ymin_nk, self._ymax_nk = ylo, yhi
+            if self.active_plot.get() != "nk":
+                self.active_plot.set("nk")
+                self.yr_label.config(text="Y Min (n,k):")
+        else:
+            self._ymin_eps, self._ymax_eps = ylo, yhi
+            if self.active_plot.get() != "eps":
+                self.active_plot.set("eps")
+                self.yr_label.config(text="Y Min (ε):")
+
+    # ════════════════════════════════════════════════════════
+    # Plot helpers
+    # ════════════════════════════════════════════════════════
+    def _add_range_info(self, ax, xmode):
+        """Add axis range info text to bottom-right corner of subplot."""
+        xlo, xhi = ax.get_xlim()
+        ylo, yhi = ax.get_ylim()
+
+        # Format x range
+        if xmode == "energy":
+            x_unit = "eV"
+            x_text = f"X: {xhi:.2f}–{xlo:.2f} {x_unit}"
+        else:
+            x_unit = "nm"
+            x_text = f"X: {xlo:.1f}–{xhi:.1f} {x_unit}"
+
+        # Format y range
+        y_text = f"Y: {ylo:.3f}–{yhi:.3f}"
+
+        # Log scale indicators
+        xlog = self.xlog_var.get()
+        ylog = ylog_get(ax)
+        log_text = ""
+        if xlog:
+            log_text += " (logX)"
+        if ylog:
+            log_text += " (logY)"
+        if log_text:
+            log_text = "  " + log_text.strip()
+
+        info_text = f"{x_text}  {y_text}{log_text}"
+
+        # Remove old range info text if exists
+        if hasattr(ax, '_range_info_text') and ax._range_info_text is not None:
+            try:
+                ax._range_info_text.remove()
+            except:
+                pass
+
+        # Add range info at bottom-right of axes (inside plot area, below any labels)
+        ax._range_info_text = ax.text(
+            0.98, 0.03, info_text,
+            transform=ax.transAxes,
+            fontsize=8, color="gray",
+            ha="right", va="bottom",
+            bbox=dict(boxstyle="round,pad=0.2", facecolor=BG, alpha=0.7, edgecolor="none")
+        )
+
+    # ════════════════════════════════════════════════════════
+    # Plot
+    # ════════════════════════════════════════════════════════
+    def _update_plot(self, *args):
+        def styl(ax):
+            ax.set_facecolor(BG)
+            for sp in ax.spines.values():
+                sp.set_color(FG)
+            ax.tick_params(colors=FG, labelcolor=FG)
+
+        # Sync entry values into active plot before redraw
+        self._suppress_sync_to_entries = True
+        self._sync_active_plot_from_entries()
+        self._suppress_sync_to_entries = False
+
+        styl(self.ax_nk)
+        styl(self.ax_eps)
+
+        if self.wavelengths is None:
+            for ax, fig, canvas in [
+                (self.ax_nk, self.fig_nk, self.canvas_nk),
+                (self.ax_eps, self.fig_eps, self.canvas_eps)]:
+                ax.clear()
+                styl(ax)
+                ax.set_title("No data", color=FG, fontsize=10)
+                ax.set_xlabel("", color=FG)
+            self.fig_nk.suptitle("")
+            self.fig_eps.suptitle("")
+            self.canvas_nk.draw()
+            self.canvas_eps.draw()
+            return
+
+        wl = self.wavelengths
+        n, k = self.n_vals, self.k_vals
+        eps1, eps2 = n**2 - k**2, 2 * n * k
+
+        xmode = self.xaxis_var.get()
+        if xmode == "energy":
+            x = WL_TO_EN(wl)
+            xlbl = "Photon Energy (eV)"
+        else:
+            x = wl
+            xlbl = "Wavelength (nm)"
+
+        xlog = self.xlog_var.get()
+
+        # ── n,k plot ──────────────────────────────────────
+        self.ax_nk.clear()
+        styl(self.ax_nk)
+
+        self.ax_nk.plot(x, n, color=ACCENT, lw=1.8, label="n")
+        self.ax_nk.plot(x, k, color=ACCENT2, lw=1.8, linestyle="--", label="k")
+        self.ax_nk.set_xlabel(xlbl, color=FG)
+        self.ax_nk.set_ylabel("n, k", color=FG, fontsize=11)
+        self.ax_nk.set_title("Refractive Index", color=FG, fontsize=11)
+        self.ax_nk.legend(framealpha=0.3, labelcolor=FG, facecolor=BG, edgecolor=FG)
+        self.ax_nk.grid(True, alpha=0.15, color=FG)
+        if xlog: self.ax_nk.set_xscale("log")
+        if ylog_get(self.ax_nk): self.ax_nk.set_yscale("log")
+
+        # ── eps plot ──────────────────────────────────────
+        self.ax_eps.clear()
+        styl(self.ax_eps)
+
+        self.ax_eps.plot(x, eps1, color=ACCENT, lw=1.8, label="ε1")
+        self.ax_eps.plot(x, eps2, color=ACCENT2, lw=1.8, linestyle="--", label="ε2")
+        self.ax_eps.axhline(0, color=FG, lw=0.6, alpha=0.4)
+        self.ax_eps.set_xlabel(xlbl, color=FG)
+        self.ax_eps.set_ylabel("ε1, ε2", color=FG, fontsize=11)
+        self.ax_eps.set_title("Dielectric Function", color=FG, fontsize=11)
+        self.ax_eps.legend(framealpha=0.3, labelcolor=FG, facecolor=BG, edgecolor=FG)
+        self.ax_eps.grid(True, alpha=0.15, color=FG)
+        if xlog: self.ax_eps.set_xscale("log")
+        if ylog_get(self.ax_eps): self.ax_eps.set_yscale("log")
+
+        self.fig_nk.suptitle(self.material_label, color=FG, fontsize=11, y=0.99)
+        self.fig_eps.suptitle(self.material_label, color=FG, fontsize=11, y=0.99)
+
+        # Add axis range info in bottom-right corner (no interference with title)
+        self._add_range_info(self.ax_nk, xmode)
+        self._add_range_info(self.ax_eps, xmode)
+
+        self.canvas_nk.draw()
+        self.canvas_eps.draw()
+
+    # ════════════════════════════════════════════════════════
+    # Export
+    # ════════════════════════════════════════════════════════
+    def _export(self):
+        if self.wavelengths is None:
+            messagebox.showwarning("No Data", "Select a material first.")
+            return
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv")],
+            initialdir=r"D:\xiaorui_macOS\scripts\refractiveindex")
+        if not path:
+            return
+
+        xmode = self.xaxis_var.get()
+        x = WL_TO_EN(self.wavelengths) if xmode == "energy" else self.wavelengths
+        eps1 = self.n_vals**2 - self.k_vals**2
+        eps2 = 2 * self.n_vals * self.k_vals
+
+        lines = []
+        if xmode == "energy":
+            lines.append("energy_eV,wavelength_nm,n,k,epsilon1,epsilon2")
+            for xi, wl, ni, ki, e1, e2 in zip(
+                    x, self.wavelengths, self.n_vals, self.k_vals, eps1, eps2):
+                lines.append(f"{xi:.4f},{wl:.4f},{ni:.6f},{ki:.6f},{e1:.4f},{e2:.4f}")
+        else:
+            lines.append("wavelength_nm,n,k,epsilon1,epsilon2")
+            for xi, ni, ki, e1, e2 in zip(
+                    x, self.n_vals, self.k_vals, eps1, eps2):
+                lines.append(f"{xi:.4f},{ni:.6f},{ki:.6f},{e1:.4f},{e2:.4f}")
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        messagebox.showinfo("Exported", f"Saved to:\n{path}")
+
+
+# ────────────────────────────────────────────────────────────
+# Helpers for per-axis log scale tracking
+# (matplotlib ax.set_yscale doesn't persist a "get" cleanly,
+#  so we track it ourselves per axis via figure annotations)
+# ────────────────────────────────────────────────────────────
+_ylog_state = {}   # maps ax -> bool
+
+def ylog_get(ax):
+    return _ylog_state.get(ax, False)
+
+def ylog_set(ax, val):
+    _ylog_state[ax] = val
+
+
+# ════════════════════════════════════════════════════════════
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = NkCurveGUI(root)
+    root.mainloop()

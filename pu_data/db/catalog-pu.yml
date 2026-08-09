@@ -1,0 +1,31 @@
+# Local Pu optical constants database
+# J. Appl. Phys. 125, 183102 (2019) - Appendices B and C
+#
+# Format matches refractiveindex.info catalog-nk.yml structure
+- SHELF: Pu
+  name: Plutonium and Pu oxides (Dinh 2019)
+  content:
+    - DIVIDER: "Delta-Pu (δ-Pu)"
+    - BOOK: delta-Pu
+      name: "Delta-Pu (δ-Pu) - J. Appl. Phys. 125, 183102 (2019) App. C"
+      content:
+        - DIVIDER: "n = -0.6702078 + 0.005482374*λ - 1.374023e-6*λ²"
+        - PAGE: nk-Dinh2019
+          name: "delta-Pu n,k (Dinh 2019, App. C)"
+          data: Pu/delta-Pu.yml
+    - DIVIDER: "Pu oxide (41 nm)"
+    - BOOK: Pu-oxide-41nm
+      name: "Pu oxide 41 nm - J. Appl. Phys. 125, 183102 (2019) App. B"
+      content:
+        - DIVIDER: "Polynomial fit, λ = 435-850 nm"
+        - PAGE: nk-41nm-Dinh2019
+          name: "Pu oxide 41nm n,k (Dinh 2019, App. B)"
+          data: Pu/Pu-oxide-41nm.yml
+    - DIVIDER: "Pu oxide (47.95 nm)"
+    - BOOK: Pu-oxide-48nm
+      name: "Pu oxide 47.95 nm - J. Appl. Phys. 125, 183102 (2019) App. B"
+      content:
+        - DIVIDER: "Polynomial fit, λ = 435-850 nm"
+        - PAGE: nk-48nm-Dinh2019
+          name: "Pu oxide 48nm n,k (Dinh 2019, App. B)"
+          data: Pu/Pu-oxide-48nm.yml

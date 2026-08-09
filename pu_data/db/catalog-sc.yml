@@ -1,0 +1,27 @@
+# Local Sc (Scandium) optical constants catalog
+# Source: 'Optical Constants of Sc' handbook, Tables 2.28-2.30
+# Format matches refractiveindex.info catalog-nk.yml structure
+- SHELF: Sc
+  name: Scandium (Sigrist 1987, Weaver 1981, Henke 1993)
+  content:
+    - BOOK: Sc-polycrystalline
+      name: "Sc polycrystalline, 300 K - Sigrist 1987 + Henke 1993"
+      content:
+        - DIVIDER: "E = 0.27 to 10000 eV, lambda ~ 0.124 to 4591 nm"
+        - PAGE: nk-Sigrist-Henke
+          name: "Sc n,k (Sigrist 1987 + Henke 1993, Table 2.28)"
+          data: Sc/Sc-Sigrist.yml
+    - BOOK: Sc-single-crystal-Eperp-c
+      name: "Sc single crystal, E perpendicular to c, 4.2 K - Weaver 1981"
+      content:
+        - DIVIDER: "E = 0.10 to 5.0 eV, lambda ~ 0.248 to 12.4 um"
+        - PAGE: nk-Weaver-Eperp-c
+          name: "Sc n,k E perpendicular to c (Weaver 1981, Table 2.29)"
+          data: Sc/Sc-Eperp-c-4K.yml
+    - BOOK: Sc-single-crystal-Epar-c
+      name: "Sc single crystal, E parallel to c, 4.2 K - Weaver 1981"
+      content:
+        - DIVIDER: "E = 0.10 to 5.0 eV, lambda ~ 0.248 to 12.4 um"
+        - PAGE: nk-Weaver-Epar-c
+          name: "Sc n,k E parallel to c (Weaver 1981, Table 2.30)"
+          data: Sc/Sc-Epar-c-4K.yml
