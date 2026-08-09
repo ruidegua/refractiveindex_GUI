@@ -1232,9 +1232,22 @@ class NkCurveGUI:
         # uses μm in raw data files and most optics workflows prefer μm over nm.
         # Epsilon1/epsilon2 can always be recomputed downstream as
         # n^2 - k^2 / 2*n*k (they don't depend on wavelength units).
+        #
+        # v0.5.4: sort by wavelength ascending. Some upstream tabulated files
+        # (e.g. Sc-Sigrist) are sampled uniformly in photon energy, so their
+        # wavelength column ends up sorted descending (high eV ↔ low λ).
+        # Without sorting, the CSV would have wavelengths going 4.6, 4.3,
+        # ... 0.0001 — confusing for downstream tools (pandas, gnuplot,
+        # spreadsheets) that expect monotonic x.
+        order = np.argsort(self.wavelengths)
+        wl_sorted = self.wavelengths[order]
+        n_sorted = self.n_vals[order]
+        k_sorted = self.k_vals[order]
         lines = ["wavelength_um,n,k"]
-        for wl_nm, ni, ki in zip(self.wavelengths, self.n_vals, self.k_vals):
-            lines.append(f"{wl_nm / 1000.0:.6f},{ni:.6f},{ki:.6f}")
+        # Use %g-style 6 significant digits so small values like k=3e-7
+        # don't round to 0.000000, while large values like n=9.558 stay compact.
+        for wl_nm, ni, ki in zip(wl_sorted, n_sorted, k_sorted):
+            lines.append(f"{wl_nm / 1000.0:.6g},{ni:.6g},{ki:.6g}")
 
         with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))

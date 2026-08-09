@@ -4,6 +4,22 @@ All notable changes to **refractiveindex_GUI** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.5] — 2026-08-09
+
+### Fixed
+- **CSV export sorted ascending by wavelength**: some upstream tabulated
+  files (notably `Sc-Sigrist.yml` and similar that were originally sampled
+  uniformly in photon energy) come out of `_load_material_data` with the
+  wavelength column sorted descending. Exporting as-is produced CSVs where
+  the x-axis jumped 4.59 → 0.0001 — confusing for downstream tools
+  (pandas, gnuplot, spreadsheets) that expect monotonic x. CSV export now
+  does `argsort(wavelengths)` before writing rows.
+- **CSV export precision**: switched from `:.6f` (6 decimal places) to
+  `:.6g` (6 significant digits) for n and k. The fixed format rounded
+  very small values (e.g. k=3.02e-7 near the Lyman-α cutoff) to
+  `0.000000` — losing information. Significant-digit format preserves
+  small values without padding big values.
+
 ## [0.5.4] — 2026-08-09
 
 ### Changed
