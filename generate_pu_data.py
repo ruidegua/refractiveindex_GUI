@@ -3,12 +3,13 @@
 Generate optical constants for delta-Pu and Pu oxide from the 2019 paper
 (Dinh et al., J. Appl. Phys. 125, 183102 — Appendices B & C).
 
-Reproduces the data files committed under ``./`` next to this script
-(``delta-Pu.txt``, ``Pu-oxide-41nm.txt``, ``Pu-oxide-47.95nm.txt``).
+Reproduces the data files committed under ``../db_extra/`` (Pu raw data
+sits alongside the Pu shelf that db_extra/catalog-pu.yml points at):
+    delta-Pu.txt, Pu-oxide-41nm.txt, Pu-oxide-47.95nm.txt
 
 Run from anywhere:
     python generate_pu_data.py
-Files are written to the same directory as this script.
+Files are written to ../db_extra/ relative to this script.
 """
 import numpy as np
 from pathlib import Path
@@ -31,8 +32,8 @@ k_oxide = (17.81371 - 0.1875458*wl + 0.0007856408*wl**2
 # Convert wavelength from nm to um for the database format
 wl_um = wl / 1000.0
 
-# Save as tabulated data, relative to this script
-output_dir = Path(__file__).resolve().parent
+# Save as tabulated data, relative to this script's sibling directory db_extra/
+output_dir = Path(__file__).resolve().parent / "db_extra"
 output_dir.mkdir(parents=True, exist_ok=True)
 
 # Delta-Pu: tabulated n,k format

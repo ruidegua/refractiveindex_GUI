@@ -3,7 +3,8 @@
 import yaml
 from pathlib import Path
 
-LOCAL_DB_PATH = Path(r'D:\xiaorui_macOS\scripts\refractiveindex\pu_data\db')
+# db_extra/ is the extra/custom DB directory; catalogs live at its root.
+LOCAL_DB_PATH = Path(__file__).resolve().parent
 pu_cat = yaml.safe_load(open(LOCAL_DB_PATH / 'catalog-pu.yml', 'r', encoding='utf-8'))
 
 print(f'Pu catalog type: {type(pu_cat)}')
@@ -29,8 +30,11 @@ for fn in ['delta-Pu.yml', 'Pu-oxide-41nm.yml', 'Pu-oxide-48nm.yml']:
     p = pu_dir / fn
     print(f'  {fn}: exists={p.exists()}')
 
-# Test merge with CAT_NK
-DB_PATH = Path(r'C:\Users\zhuxi\.refractiveindex.info-database')
+# Test merge with CAT_NK. Prefer bundled ../db/ (next to this script's parent);
+# fall back to the system DB at ri._DEFAULT_DB_PATH if not found.
+import refractiveindex.refractiveindex as ri
+_BUNDLED = LOCAL_DB_PATH.parent / "db"
+DB_PATH = _BUNDLED if _BUNDLED.exists() else Path(ri._DEFAULT_DB_PATH)
 CAT_NK = yaml.safe_load(open(DB_PATH / 'catalog-nk.yml', 'r', encoding='utf-8'))
 print(f'\nSystem catalog: {len(CAT_NK)} entries')
 CAT_NK.extend(pu_cat)

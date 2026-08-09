@@ -2,6 +2,9 @@
 nk_GUI.py - Optical Constants (n, k) and Dielectric Function (eps1, eps2) Viewer
 Based on refractiveindex.info database (bundled in ./db, CC0 public domain).
 
+v0.5.2 (refractiveindex_GUI): extra-DB path is now ./db_extra/ (was ./pu_data/db/).
+        CSV export simplified to 3 columns (wavelength_nm, n, k).
+
 v0.5.1 (refractiveindex_GUI): prefer bundled db/ next to this script over the
         system DB shipped with the `refractiveindex` pip package, so the repo
         is self-contained. Title bar and DB_PATH reflect the choice at startup.
@@ -72,7 +75,7 @@ else:
 # `catalog-*.yml` file in LOCAL_DB_PATH and merges it into CAT_NK. Add a
 # new material by dropping a shelf directory under LOCAL_DB_PATH/ and
 # creating a matching catalog-*.yml that points at it.
-LOCAL_DB_PATH = Path(__file__).resolve().parent / "pu_data" / "db"
+LOCAL_DB_PATH = Path(__file__).resolve().parent / "db_extra"
 
 # ════════════════════════════════════════════════════════════
 # Database loading
@@ -398,7 +401,7 @@ class NkCurveGUI:
 
     def __init__(self, root):
         self.root = root
-        root.title(f"nk Curve Viewer v0.5.1 — refractiveindex.info ({_DB_SOURCE})")
+        root.title(f"nk Curve Viewer v0.5.2 — refractiveindex.info ({_DB_SOURCE})")
         root.geometry("1200x900")
         root.minsize(1000, 650)
         root.state("zoomed")   # start maximized
@@ -1181,26 +1184,15 @@ class NkCurveGUI:
         path = filedialog.asksaveasfilename(
             defaultextension=".csv",
             filetypes=[("CSV", "*.csv")],
-            initialdir=r"D:\xiaorui_macOS\scripts\refractiveindex")
+            initialdir=str(Path(__file__).resolve().parent))
         if not path:
             return
 
-        xmode = self.xaxis_var.get()
-        x = WL_TO_EN(self.wavelengths) if xmode == "energy" else self.wavelengths
-        eps1 = self.n_vals**2 - self.k_vals**2
-        eps2 = 2 * self.n_vals * self.k_vals
-
-        lines = []
-        if xmode == "energy":
-            lines.append("energy_eV,wavelength_nm,n,k,epsilon1,epsilon2")
-            for xi, wl, ni, ki, e1, e2 in zip(
-                    x, self.wavelengths, self.n_vals, self.k_vals, eps1, eps2):
-                lines.append(f"{xi:.4f},{wl:.4f},{ni:.6f},{ki:.6f},{e1:.4f},{e2:.4f}")
-        else:
-            lines.append("wavelength_nm,n,k,epsilon1,epsilon2")
-            for xi, ni, ki, e1, e2 in zip(
-                    x, self.n_vals, self.k_vals, eps1, eps2):
-                lines.append(f"{xi:.4f},{ni:.6f},{ki:.6f},{e1:.4f},{e2:.4f}")
+        # v0.5.2: 3-column CSV (wavelength_nm, n, k) regardless of GUI x-axis mode.
+        # Epsilon1/epsilon2 can always be recomputed downstream as n^2 - k^2 / 2*n*k.
+        lines = ["wavelength_nm,n,k"]
+        for wl, ni, ki in zip(self.wavelengths, self.n_vals, self.k_vals):
+            lines.append(f"{wl:.4f},{ni:.6f},{ki:.6f}")
 
         with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))

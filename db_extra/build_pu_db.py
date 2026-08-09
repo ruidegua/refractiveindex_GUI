@@ -2,11 +2,12 @@
 """Build Pu database YAML files from the paper formulas."""
 import numpy as np
 import os
+from pathlib import Path
 
-# Output base dir
-base = r"D:\xiaorui_macOS\scripts\refractiveindex\pu_data\db"
-pu_dir = os.path.join(base, "Pu")
-os.makedirs(pu_dir, exist_ok=True)
+# Output base dir: same directory as this script
+base = Path(__file__).resolve().parent
+pu_dir = base / "Pu"
+pu_dir.mkdir(parents=True, exist_ok=True)
 
 # Wavelength: 435-850 nm, every 5 nm = 84 points
 wl_nm = np.arange(435, 855, 5)  # 435 to 850 inclusive

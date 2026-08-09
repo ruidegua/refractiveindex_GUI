@@ -1,15 +1,22 @@
 # -*- coding: utf-8 -*-
 """Simulate GUI loading of Pu data."""
 import sys
-sys.path.insert(0, r'D:\xiaorui_macOS\scripts\refractiveindex')
 
 import numpy as np
 from scipy.interpolate import interp1d
 import yaml
 from pathlib import Path
 
-LOCAL_DB_PATH = Path(r'D:\xiaorui_macOS\scripts\refractiveindex\pu_data\db')
-DB_PATH = Path(r'C:\Users\zhuxi\.refractiveindex.info-database')
+# This script mirrors the GUI's data loader. DBs are read from the same
+# directories as nk_GUI.py:
+#   - bundled system DB:    <repo>/db/    (refractiveindex.info, CC0)
+#   - extra / custom DB:    <repo>/db_extra/   (Pu, Sc, ...)
+# Both are relative to this script's parent directory.
+LOCAL_DB_PATH = Path(__file__).resolve().parent
+BUNDLED_DB_PATH = LOCAL_DB_PATH.parent / "db"
+
+import refractiveindex.refractiveindex as ri
+DB_PATH = Path(ri._DEFAULT_DB_PATH) if not BUNDLED_DB_PATH.exists() else BUNDLED_DB_PATH
 
 def _load_material_data(shelf, book, page):
     """Simulate _load_material_data from the GUI."""

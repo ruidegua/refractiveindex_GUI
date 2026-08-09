@@ -10,8 +10,10 @@ A self-contained Tk GUI for browsing **refractive index (n, k)** and
 locally so it works offline without depending on the `refractiveindex`
 pip package's installed data path.
 
-> **Based on `nk_GUI_v0_5.py`** (2026-08-08). v0.5.1 adds bundled-DB path
-> resolution; the original feature set is unchanged.
+> **Based on `nk_GUI_v0_5.py`** (2026-08-08).
+> v0.5.2: CSV export simplified to 3 columns (wavelength_nm, n, k); extra/custom
+> DB consolidated in `./db_extra/`.
+> v0.5.1: bundled-DB path resolution; the original feature set is unchanged.
 
 ## Features
 
@@ -62,15 +64,17 @@ refractiveindex_GUI/
 ├── nk_GUI.py                    # Main Tk GUI (entry point)
 ├── generate_pu_data.py          # Regenerate the Pu data files from the 2019 paper
 ├── plot_pu_optical_constants.py # Quick standalone plot of the Pu data
-├── pu_data/                     # Local custom DB (Pu, Sc)
-│   ├── db/                      #   catalog-*.yml + Pu/ + Sc/ shelves
-│   ├── *.csv, *.txt, *.yml      #   raw measurement files
-│   └── build_*.py, simulate_load.py, ...
 ├── db/                          # Bundled refractiveindex.info database (CC0)
 │   ├── catalog-n2.yml, catalog-nk.yml
 │   ├── data/{glass,main,organic,other,specs}/   # 4180+ yml data files
 │   ├── doc/                     #   license, credits, formulas PDF
 │   └── .version                 #   upstream git SHA
+├── db_extra/                    # Extra / custom DB (NOT from refractiveindex.info)
+│   ├── catalog-pu.yml, catalog-sc.yml
+│   ├── Pu/...                   #   Pu shelf data (Dinh 2019)
+│   ├── Sc/...                   #   Sc shelf data (Sigrist/Weaver/Henke)
+│   ├── *.csv, *.txt, *.yml      #   raw measurement files
+│   └── build_*.py, simulate_load.py, test_db.py, ...
 ├── requirements.txt
 ├── LICENSE                      # MIT (code) + CC0 (db/) notice
 ├── README.md
@@ -78,13 +82,17 @@ refractiveindex_GUI/
 └── .gitignore
 ```
 
+`db/` (refractiveindex.info) and `db_extra/` (your own additions) are
+separate on purpose. The GUI merges both catalogs at startup; the extra
+shelves appear in the tree just like the system ones.
+
 ## Adding a custom material
 
-The GUI auto-discovers any `catalog-<name>.yml` file in `pu_data/db/` and
+The GUI auto-discovers any `catalog-<name>.yml` file in `db_extra/` and
 merges it into the catalog at startup. To add a new material:
 
-1. Drop a shelf directory under `pu_data/db/<shelf>/<book>/`.
-2. Create `pu_data/db/catalog-<name>.yml` that points at it (see
+1. Drop a shelf directory under `db_extra/<shelf>/<book>/`.
+2. Create `db_extra/catalog-<name>.yml` that points at it (see
    `catalog-pu.yml` / `catalog-sc.yml` for examples).
 3. Restart the GUI — the new shelf appears in the tree on the left.
 
@@ -98,15 +106,16 @@ a typical example.
 | Shelf | Source | License |
 |---|---|---|
 | `db/` (glass, main, organic, other, specs) | refractiveindex.info, M. Polyanskiy | CC0 1.0 |
-| `pu_data/db/Pu` | Dinh et al., *J. Appl. Phys.* **125**, 183102 (2019), Appendices B & C | (paper) |
-| `pu_data/db/Sc` | Sigrist (1987) + Henke (1993) + Weaver (1981) | (papers) |
+| `db_extra/Pu` | Dinh et al., *J. Appl. Phys.* **125**, 183102 (2019), Appendices B & C | (paper) |
+| `db_extra/Sc` | Sigrist (1987) + Henke (1993) + Weaver (1981) | (papers) |
 
 See `db/doc/credits.txt` for the full upstream credit list and
-`pu_data/` for the original measurement files.
+`db_extra/` for the original measurement files.
 
 ## Versioning
 
-- **v0.5.1** (this repo) — bundled DB; title bar reports DB source.
+- **v0.5.2** (this repo) — 3-column CSV export; extra DB moved to `db_extra/`.
+- **v0.5.1** — bundled DB; title bar reports DB source.
 - **v0.5** — original two-plot independent-zoom/pan rewrite.
 
 ## Related projects

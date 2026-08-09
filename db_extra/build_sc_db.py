@@ -12,8 +12,8 @@ Citations in the source:
       Tables 54, 181 (1993); http://henke.lbl.gov/optical_constants.
 
 This script reads the raw tabulated n,k data (eV → converted to µm),
-writes the data YAML to pu_data/db/Sc/Sc-Sigrist.yml, and creates the
-catalog entry to pu_data/db/catalog-sc.yml.
+writes the data YAML to ./Sc/Sc-Sigrist.yml, and creates the
+catalog entry to ./catalog-sc.yml.
 
 Run from anywhere; output paths are computed relative to this file.
 

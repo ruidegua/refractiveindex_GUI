@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """Generate RI data files for Pu and Pu oxide from J. Appl. Phys. 125, 183102 (2019)."""
 import numpy as np
-import os
+from pathlib import Path
 
-# Output directory
-out_dir = r"D:\xiaorui_macOS\scripts\refractiveindex\pu_data"
-os.makedirs(out_dir, exist_ok=True)
+# Output directory: same as this script
+out_dir = Path(__file__).resolve().parent
+out_dir.mkdir(parents=True, exist_ok=True)
 
 # Wavelength range: 435-850 nm (as specified in the paper)
 wl = np.linspace(435, 850, 500)  # nm

@@ -4,6 +4,28 @@ All notable changes to **refractiveindex_GUI** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.2] — 2026-08-09
+
+### Changed
+- **CSV export simplified**: 3 columns (`wavelength_nm, n, k`) regardless of
+  GUI x-axis mode. Dropped `energy_eV` / `epsilon1` / `epsilon2` columns
+  (epsilon can be recomputed downstream from n, k).
+- **`pu_data/` → `db_extra/`**: extra/custom DB (catalogs + shelves + raw
+  source files + build scripts) consolidated into a single `db_extra/`
+  directory at the repo root, flat layout. The system DB (`db/`,
+  refractiveindex.info) and the extra DB (`db_extra/`) are now
+  visibly separate.
+- `nk_GUI.py` `LOCAL_DB_PATH` updated to `Path(__file__).resolve().parent
+  / "db_extra"`.
+- `generate_pu_data.py` now writes outputs to `db_extra/` instead of the
+  repo root.
+- Hardcoded Windows paths removed from `db_extra/build_pu_db.py`,
+  `db_extra/build_sc_db.py`, `db_extra/generate_pu_ri.py`,
+  `db_extra/simulate_load.py`, `db_extra/test_db.py` — all now use
+  `Path(__file__).resolve().parent`.
+- Initial-dir of the export file dialog now defaults to the script
+  directory (was hardcoded to the old `D:\xiaorui_macOS\...` path).
+
 ## [0.5.1] — 2026-08-09
 
 ### Added
