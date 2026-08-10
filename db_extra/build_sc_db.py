@@ -600,8 +600,12 @@ def _build_catalog_yml() -> str:
 
 def main() -> int:
     here = Path(__file__).resolve().parent
-    sc_dir = here / "db" / "Sc"
-    catalog_path = here / "db" / "catalog-sc.yml"
+    # Output paths: catalog + data files go to db_extra/ root (NOT db_extra/db/).
+    # nk_GUI.py's LOCAL_DB_PATH = repo/db_extra/ and catalogs are globbed from
+    # there. Writing to db_extra/db/ would put the new catalog + data in the
+    # wrong place and the GUI would still load the (now stale) originals.
+    sc_dir = here / "Sc"
+    catalog_path = here / "catalog-sc.yml"
 
     sc_dir.mkdir(parents=True, exist_ok=True)
 

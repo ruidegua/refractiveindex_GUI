@@ -4,6 +4,46 @@ All notable changes to **refractiveindex_GUI** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.6] — 2026-08-10
+
+### Fixed
+- **Cross-platform window maximize**: replaced bare `root.state("zoomed")`
+  with a platform-aware helper `_maximize_window(root)`.
+  - `win32`: keeps `state("zoomed")` (works correctly).
+  - `darwin` (macOS): no-op. macOS Tk silently ignores `state("zoomed")`
+    so the window used to open at the 1200×900 fallback; users now get
+    the same 1200×900 without the no-op call. The green maximize button
+    on the title bar still works.
+  - `linux` (X11 / Wayland / Cinnamon / MATE / Xfce): tries
+    `state("zoomed")` first; if the WM doesn't apply it (some Wayland
+    sessions and certain Cinnamon/MATE configs on Linux Mint silently
+    drop the request), falls back to setting geometry to the screen
+    size directly.
+- **PanedWindow lag on macOS**: switched the left/right splitter from
+  `ttk.PanedWindow` to classic `tk.PanedWindow`. The ttk version redraws
+  every child widget on every sash motion event, which made dragging the
+  left-side panel width feel janky on macOS. The classic version uses
+  native window handles and is smooth on all three OSes.
+- **`generate_pu_data.py` and `db_extra/generate_pu_ri.py`** were
+  broken on all OSes (not a cross-platform issue per se, but they would
+  fail with `NameError: name 'os' is not defined` on every run because
+  `os.path.join` was used without `import os`). Replaced with
+  `pathlib` `/` joins to match the project style.
+- **`db_extra/build_sc_db.py`** wrote outputs to `db_extra/db/Sc/...`
+  and `db_extra/db/catalog-sc.yml` — one directory level too deep.
+  `nk_GUI.py` reads from `db_extra/` (not `db_extra/db/`), so running
+  the script produced a stale catalog in `db_extra/db/` that the GUI
+  ignored. Fixed to write to `db_extra/Sc/` and `db_extra/catalog-sc.yml`.
+
+### Added
+- Cross-platform smoke tests at `tests/test_smoke.py` covering DB path
+  resolution, local catalog merge, system + local material loading, CSV
+  export logic, and PanedWindow type / maximize-helper sanity checks.
+- GitHub Actions CI at `.github/workflows/ci.yml` with a 3 OS × 3 Python
+  matrix (Ubuntu / macOS / Windows × Python 3.10 / 3.11 / 3.12) that
+  installs `python3-tk + xvfb` on Linux and runs the smoke tests under
+  `MPLBACKEND=Agg`.
+
 ## [0.5.5] — 2026-08-09
 
 ### Fixed
