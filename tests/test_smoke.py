@@ -11,19 +11,12 @@ Tests run under `MPLBACKEND=Agg` so they don't need a display.
 
 from __future__ import annotations
 
-import os
-
-# CRITICAL: set MPLBACKEND before any matplotlib/pyplot import happens
-# inside nk_GUI.py or any of the modules it pulls in.
-os.environ.setdefault("MPLBACKEND", "Agg")
-
 import sys
 import tkinter as tk
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")  # belt-and-suspenders
+# matplotlib.use('Agg') is configured in tests/conftest.py so it runs
+# before any test module imports matplotlib. Don't set it here.
 
 import pytest
 
@@ -175,18 +168,48 @@ def test_csv_export_round_trip(tmp_path):
 # ────────────────────────────────────────────────────────────────
 # v0.5.6 cross-platform patches
 # ────────────────────────────────────────────────────────────────
-def test_panedwindow_is_classic_tk():
-    """The splitter must be classic tk.PanedWindow (not ttk) for
-    smooth sash drag on macOS. ttk.PanedWindow's widget class name is
-    'TPanedwindow'; tk.PanedWindow's is 'Panedwindow'.
+def test_maximize_helper_has_platform_branches():
+    """The helper must explicitly handle the three known problem cases:
+    win32, darwin, and the generic linux branch. Source inspection --
+    no Tk root needed (so this test never trips the Windows
+    tk.Tk() reuse bug described below).
     """
     import nk_GUI
+    import inspect
+
+    src = inspect.getsource(nk_GUI._maximize_window)
+    assert 'sys.platform == "win32"' in src, "win32 branch missing"
+    assert 'sys.platform == "darwin"' in src, "darwin branch missing"
+    # The linux fallback path -- check for the geometry() fallback
+    assert "geometry" in src, "geometry fallback missing"
+
+
+def test_gui_features_combined():
+    """Combined GUI test -- single Tk root for all GUI-touching checks.
+
+    Why one test for four assertions: on Windows CI runners, creating
+    and destroying multiple `tk.Tk()` roots in the same Python process
+    can leave the Tcl interpreter in a state where the next `tk.Tk()`
+    raises `TclError: couldn't read auto.tcl`. This is a Tk / Tcl issue,
+    not our code. macOS and Linux runners tolerate it fine. Solution:
+    do every Tk-touching assertion inside a single Tk root, in one test
+    function. Source-inspection-only assertions (PanedWindow class,
+    maximize helper branches) go in separate tests that don't touch Tk.
+    """
+    import nk_GUI
+
     root = tk.Tk()
     try:
+        # (1) Build the full GUI widget tree -- exercises PanedWindow,
+        # tree, plots, all ttk widgets. Catches regressions in
+        # NkCurveGUI.__init__ on every platform.
         NkCurveGUI = nk_GUI.NkCurveGUI  # noqa: N806
         app = NkCurveGUI(root)
         root.update_idletasks()
 
+        # (2) PanedWindow must be classic tk.PanedWindow (not ttk).
+        # ttk.PanedWindow's widget class is 'TPanedwindow';
+        # tk.PanedWindow's is 'Panedwindow'.
         def find_panewindow(widget):
             if widget.winfo_class() in ("Panedwindow", "TPanedwindow"):
                 return widget
@@ -200,63 +223,31 @@ def test_panedwindow_is_classic_tk():
         assert pw is not None, "PanedWindow not found in widget tree"
         assert pw.winfo_class() == "Panedwindow", (
             f"expected classic tk.PanedWindow (class 'Panedwindow'), got "
-            f"{pw.winfo_class()!r} -- this means ttk.PanedWindow is still "
-            f"in use and sash drag will lag on macOS"
+            f"{pw.winfo_class()!r} -- ttk.PanedWindow is in use and sash "
+            f"drag will lag on macOS"
         )
 
-        # Left pane must be fixed-ish width (width=430 hint)
+        # Left pane must be fixed-ish width (width=430 hint); right
+        # pane stretches to fill the rest of the window.
         panes = [root.nametowidget(str(p)) for p in pw.panes()]
         assert len(panes) == 2
         assert pw.paneconfig(panes[0], "stretch")[4] == "never"
         assert pw.paneconfig(panes[1], "stretch")[4] == "always"
-    finally:
-        root.destroy()
 
-
-def test_maximize_helper_exists_and_callable():
-    """_maximize_window must be defined and callable without raising,
-    on every platform CI runs on (win32 / linux / darwin).
-    """
-    import nk_GUI
-    root = tk.Tk()
-    try:
-        # Must not raise on the current platform
+        # (3) _maximize_window must be callable on the current platform
+        # without raising. On macOS it's a no-op; on win32/linux it
+        # does its thing.
         nk_GUI._maximize_window(root)
         root.update_idletasks()
-    finally:
-        root.destroy()
 
-
-def test_maximize_helper_has_platform_branches():
-    """The helper must explicitly handle the three known problem cases:
-    win32, darwin, and the generic linux branch.
-    """
-    import nk_GUI
-    import inspect
-
-    src = inspect.getsource(nk_GUI._maximize_window)
-    assert 'sys.platform == "win32"' in src, "win32 branch missing"
-    assert 'sys.platform == "darwin"' in src, "darwin branch missing"
-    # The linux fallback path -- check for the geometry() fallback
-    assert "geometry" in src, "geometry fallback missing"
-
-
-# ────────────────────────────────────────────────────────────────
-# Headless run -- verify the whole __main__ flow works without
-# crashing (we just build the UI, don't enter mainloop)
-# ────────────────────────────────────────────────────────────────
-def test_full_gui_build_headless():
-    """Build the entire GUI widget tree on a headless Tk root."""
-    import nk_GUI
-    root = tk.Tk()
-    try:
-        app = nk_GUI.NkCurveGUI(root)
-        root.update_idletasks()
-        # Load a material to exercise the data path
+        # (4) Material load -- exercises the data path end-to-end.
         app._load("main", "Si", "Aspnes")
         assert app.wavelengths is not None
         assert app.n_vals is not None
         assert app.k_vals is not None
+        # Query path also works
+        from scipy.interpolate import interp1d  # noqa: F401  # sanity
+        assert float(app._interp_n(500.0)) > 0
     finally:
         root.destroy()
 
