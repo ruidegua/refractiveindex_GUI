@@ -22,7 +22,7 @@ k_pu = -0.1313834 + 0.01075337 * wl - 8.596842e-6 * wl**2
 wl_um = wl / 1000.0
 
 # Save as CSV (wavelength in nm, n, k)
-csv_path = os.path.join(out_dir, "delta-Pu.csv")
+csv_path = out_dir / "delta-Pu.csv"
 with open(csv_path, "w", encoding="utf-8") as f:
     f.write("# Delta-Pu (δ-Pu) optical constants\n")
     f.write("# J. Appl. Phys. 125, 183102 (2019) - Appendix C\n")
@@ -45,7 +45,7 @@ n_oxide_41 = (12.95378 - 0.09204364*wl + 0.0002722518*wl**2
 k_oxide_41 = (17.81371 - 0.1875458*wl + 0.0007856408*wl**2 
                - 1.651641e-6*wl**3 + 1.881628e-9*wl**4 - 1.116711e-12*wl**5 + 2.717676e-16*wl**6)
 
-csv_path2 = os.path.join(out_dir, "Pu-oxide-41nm.csv")
+csv_path2 = out_dir / "Pu-oxide-41nm.csv"
 with open(csv_path2, "w", encoding="utf-8") as f:
     f.write("# Pu oxide (41 nm surface oxide) optical constants\n")
     f.write("# J. Appl. Phys. 125, 183102 (2019) - Appendix B\n")
@@ -64,7 +64,7 @@ n_oxide_48 = (12.95379 - 0.09204364*wl + 0.0002722518*wl**2
 k_oxide_48 = (17.81371 - 0.1875458*wl + 0.0007856408*wl**2 
                - 1.651641e-6*wl**3 + 1.881628e-9*wl**4 - 1.116711e-12*wl**5 + 2.717676e-16*wl**6)
 
-csv_path3 = os.path.join(out_dir, "Pu-oxide-47.95nm.csv")
+csv_path3 = out_dir / "Pu-oxide-47.95nm.csv"
 with open(csv_path3, "w", encoding="utf-8") as f:
     f.write("# Pu oxide (47.95 nm surface oxide) optical constants\n")
     f.write("# J. Appl. Phys. 125, 183102 (2019) - Appendix B\n")

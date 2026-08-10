@@ -37,7 +37,7 @@ output_dir = Path(__file__).resolve().parent / "db_extra"
 output_dir.mkdir(parents=True, exist_ok=True)
 
 # Delta-Pu: tabulated n,k format
-with open(os.path.join(output_dir, "delta-Pu.txt"), "w", encoding="utf-8") as f:
+with open(output_dir / "delta-Pu.txt", "w", encoding="utf-8") as f:
     f.write("# Delta-Pu (delta-Pu) optical constants\n")
     f.write("# From: Spectroscopic ellipsometry extraction of optical constants\n")
     f.write("# for materials from oxide covered samples: Application to the\n")
@@ -51,7 +51,7 @@ with open(os.path.join(output_dir, "delta-Pu.txt"), "w", encoding="utf-8") as f:
         f.write(f"{w:.6f}  {n_val:.6f}  {k_val:.6f}\n")
 
 # Pu oxide: tabulated n,k format  
-with open(os.path.join(output_dir, "Pu-oxide-41nm.txt"), "w", encoding="utf-8") as f:
+with open(output_dir / "Pu-oxide-41nm.txt", "w", encoding="utf-8") as f:
     f.write("# Pu oxide (41 nm surface oxide) optical constants\n")
     f.write("# From: Same 2019 paper, Appendix B\n")
     f.write("# lambda range: 435-850 nm\n")

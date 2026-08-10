@@ -11,6 +11,9 @@ locally so it works offline without depending on the `refractiveindex`
 pip package's installed data path.
 
 > **Based on `nk_GUI_v0_5.py`** (2026-08-08).
+> v0.5.6: cross-platform maximize helper + classic `tk.PanedWindow` for
+> smooth sash drag on macOS / Linux; fixed `os.path.join` bugs in Pu data
+> build scripts; corrected `build_sc_db.py` output path.
 > v0.5.5: CSV sorted ascending by wavelength; n/k use `:.6g` so small k
 > (e.g. 3e-7) doesn't round to 0.
 > v0.5.4: CSV export wavelength changed from nm to μm.
@@ -118,7 +121,9 @@ See `db/doc/credits.txt` for the full upstream credit list and
 
 ## Versioning
 
-- **v0.5.5** (this repo) — CSV sorted ascending; precision bumped to 6 sig digs.
+- **v0.5.6** (this repo) — cross-platform maximize + PanedWindow fix; build
+  script bug fixes (3 scripts); CI matrix (3 OS × 3 Python).
+- **v0.5.5** — CSV sorted ascending; precision bumped to 6 sig digs.
 - **v0.5.4** — CSV export wavelength in μm.
 - **v0.5.3** — log-axis bug fixes (scroll zoom, Apply, entry boxes).
 - **v0.5.2** — 3-column CSV export; extra DB moved to `db_extra/`.

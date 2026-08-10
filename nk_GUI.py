@@ -2,6 +2,16 @@
 nk_GUI.py - Optical Constants (n, k) and Dielectric Function (eps1, eps2) Viewer
 Based on refractiveindex.info database (bundled in ./db, CC0 public domain).
 
+v0.5.6 (refractiveindex_GUI): cross-platform compatibility fixes.
+        - Window maximize is now platform-aware (helper _maximize_window):
+          state('zoomed') on win32, no-op on darwin (Tk ignores it),
+          try-zoomed-then-fallback-geometry on linux (some WMs, notably
+          Wayland sessions and certain Cinnamon/MATE configs on Linux
+          Mint, silently drop _NET_WM_STATE_MAXIMIZED_HORZ/VERT).
+        - PanedWindow switched from ttk.PanedWindow to tk.PanedWindow
+          (classic) for smoother sash drag on macOS and Linux. The ttk
+          version redraws all child widgets on every sash motion event.
+
 v0.5.4 (refractiveindex_GUI): CSV export wavelength units changed from nm
         to μm (column header wavelength_um, values divided by 1000). Most
         optics workflows and the upstream refractiveindex.info raw data
@@ -45,6 +55,7 @@ Features:
 Dependencies: numpy, matplotlib, tkinter (ttk), pyyaml, scipy, refractiveindex
 """
 
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
@@ -417,10 +428,10 @@ class NkCurveGUI:
 
     def __init__(self, root):
         self.root = root
-        root.title(f"nk Curve Viewer v0.5.4 — refractiveindex.info ({_DB_SOURCE})")
+        root.title(f"nk Curve Viewer v0.5.6 — refractiveindex.info ({_DB_SOURCE})")
         root.geometry("1200x900")
         root.minsize(1000, 650)
-        root.state("zoomed")   # start maximized
+        _maximize_window(root)   # platform-aware: zoomed on win32, no-op on darwin, fallback geometry on linux
         root.configure(bg=BG)
 
         self.wavelengths = self.n_vals = self.k_vals = None
@@ -458,15 +469,23 @@ class NkCurveGUI:
               foreground=[("selected", SEL_FG)])
 
     def _build_ui(self):
-        paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        # Use tk.PanedWindow (classic) instead of ttk.PanedWindow. The ttk
+        # version's sash drag is janky on macOS — every motion event triggers
+        # a full redraw of all child widgets. Classic tk.PanedWindow uses
+        # native window handles and stays smooth on all three OSes.
+        # On Linux/X11/Cinnamon, ttk.PanedWindow also has occasional sash
+        # re-render glitches; classic tk is responsive everywhere.
+        paned = tk.PanedWindow(self.root, orient=tk.HORIZONTAL,
+                               sashrelief=tk.RAISED, sashwidth=4,
+                               bg=BG, bd=0)
         paned.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
-        left = ttk.Frame(paned)
-        paned.add(left, weight=0)
+        left = tk.Frame(paned, bg=BG)
+        paned.add(left, minsize=200, stretch="never", width=430)
         self._build_left(left)
 
-        right = ttk.Frame(paned)
-        paned.add(right, weight=1)
+        right = tk.Frame(paned, bg=BG)
+        paned.add(right, minsize=400, stretch="always")
         self._build_right(right)
 
     def _build_left(self, parent):
@@ -1300,6 +1319,42 @@ def _set_ylim_linear(ax, ylo, yhi):
         return False
     ax.set_ylim(ylo, yhi)
     return True
+
+
+# ════════════════════════════════════════════════════════════
+# Cross-platform window maximize helper
+#
+# - win32: state('zoomed') works (full-screen on Windows).
+# - darwin (macOS): Tk's state('zoomed') is silently ignored. The window
+#   opens at the geometry() size; the user can use the green maximize
+#   button. We intentionally don't try to fake it — fighting macOS Tk's
+#   window manager produces worse results than the 1200x900 default.
+# - linux (X11 / Wayland / Cinnamon / MATE / Xfce): state('zoomed') sends
+#   _NET_WM_STATE_MAXIMIZED_HORZ/VERT. Most WMs honor it, but some (Wayland
+#   sessions, certain Cinnamon/MATE configs on Linux Mint) silently drop
+#   the request. Belt-and-suspenders: if zoomed didn't take effect, fall
+#   back to setting geometry directly.
+# ════════════════════════════════════════════════════════════
+def _maximize_window(root):
+    """Maximize root window across platforms. No-op on macOS."""
+    if sys.platform == "win32":
+        root.state("zoomed")
+        return
+    if sys.platform == "darwin":
+        return  # macOS Tk doesn't recognize 'zoomed'
+    # Linux: try state('zoomed'), then check if it actually applied
+    try:
+        root.state("zoomed")
+        root.update_idletasks()
+        if root.state() != ("zoomed",):
+            # WM didn't honor it (Wayland, some X11 WMs); force geometry
+            sw = root.winfo_screenwidth()
+            sh = root.winfo_screenheight()
+            root.geometry(f"{sw}x{sh}+0+0")
+    except tk.TclError:
+        sw = root.winfo_screenwidth()
+        sh = root.winfo_screenheight()
+        root.geometry(f"{sw}x{sh}+0+0")
 
 
 # ════════════════════════════════════════════════════════════
