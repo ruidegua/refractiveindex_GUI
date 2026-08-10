@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  smoke:
+    name: smoke (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Linux Tk + xvfb
+        # GitHub-hosted Ubuntu runners ship python3 but not python3-tk
+        # (Tkinter). We need it to import nk_GUI; xvfb lets us run Tk
+        # widget construction under a virtual display.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk xvfb
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run smoke tests
+        env:
+          # Agg backend so matplotlib doesn't try to grab a real display
+          # even if a window manager is available (X11 on Linux, Aqua on
+          # macOS, native on Windows).
+          MPLBACKEND: Agg
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a python -m pytest tests/ -v --tb=short
+          else
+            python -m pytest tests/ -v --tb=short
+          fi
+
+  build-scripts:
+    name: build scripts dry-run
+    # The 3 data-regenerator scripts (generate_pu_data.py,
+    # db_extra/generate_pu_ri.py, db_extra/build_sc_db.py --verify)
+    # are not on the smoke-test path but they are part of the repo and
+    # they had bugs in v0.5.5 (os.path.join without `import os`,
+    # build_sc_db writing to db_extra/db/ instead of db_extra/). Run
+    # them on every push to catch regressions early.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Run generate_pu_data.py (writes to db_extra/)
+        run: |
+          # The script writes files into db_extra/. Stash any changes so
+          # the run is idempotent across CI invocations.
+          git stash push -- db_extra/ || true
+          python generate_pu_data.py
+      - name: Run db_extra/generate_pu_ri.py (writes to db_extra/)
+        run: |
+          python db_extra/generate_pu_ri.py
+      - name: Run db_extra/build_sc_db.py --verify (writes to db_extra/Sc/ + catalog-sc.yml)
+        run: |
+          python db_extra/build_sc_db.py --verify

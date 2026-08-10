@@ -1,0 +1,5 @@
+# Development / test dependencies.
+# Runtime users don't need this; CI installs it via pip install -r requirements-dev.txt.
+
+# Test framework
+pytest>=7.0
