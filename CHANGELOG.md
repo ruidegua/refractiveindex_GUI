@@ -4,6 +4,40 @@ All notable changes to **refractiveindex_GUI** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.8] — 2026-08-11
+
+### Fixed
+- **Export CSV button unreachable on 1280x800 Linux Mint**: the left
+  control panel's total content height (~540 px including title,
+  search, tree, Active Plot / Options / Query LabelFrames, Status,
+  Export CSV button) exceeded the left pane's visible content area
+  on some Linux Mint setups where Cinnamon WM decorations + theme
+  reduced the usable height. Tk `pack` silently clipped the bottom
+  widget. The left pane is now wrapped in a scrollable Canvas
+  (`_make_scrollable` helper), so all controls remain reachable via
+  mouse wheel / scrollbar even on small screens. Handles macOS delta
+  events, X11 Button-4/5 (Cinnamon), and Windows MouseWheel.
+- **nk and epsilon plots rendered at different heights on 1280x800
+  Linux Mint**: matplotlib's `FigureCanvasTkAgg` has a figsize-based
+  natural size request (8×4.2 in @ 110 dpi = 880×462 px) that
+  `pack(expand=True)` didn't honour consistently across themes.
+  Switched the right pane to `grid` layout with `weight=1` on rows 1
+  and 2 so they get equal allocation regardless of internal sizing
+  quirks. Both plots now always render at exactly the same height.
+
+### Added
+- `_make_scrollable(parent)` helper: returns an inner Frame wrapped in
+  a Canvas + vertical scrollbar, with mouse-wheel scrolling bound on
+  `<Enter>` and unbound on `<Leave>` so wheel events only fire when
+  the cursor is over the scrollable region.
+- 2 new source-inspection tests + 1 in-process assertion (combined
+  into the existing GUI test to avoid the Windows Tk state-reuse
+  bug):
+    - `test_left_pane_is_scrollable`
+    - `test_right_pane_uses_grid_layout`
+    - `app.frame_nk.winfo_height() == app.frame_eps.winfo_height()`
+      inside `test_gui_features_combined`
+
 ## [0.5.7] — 2026-08-11
 
 ### Changed

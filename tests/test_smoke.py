@@ -260,6 +260,51 @@ def test_left_panel_width_floor():
 
 
 # ────────────────────────────────────────────────────────────────
+# v0.5.8 small-screen layout fixes (1280x800 Linux Mint bugs)
+# ────────────────────────────────────────────────────────────────
+def test_left_pane_is_scrollable():
+    """v0.5.8 fix for Linux Mint 1280x800: left pane is now wrapped in
+    a scrollable Canvas so all controls (including Export CSV at the
+    bottom) remain reachable even when the total content height
+    exceeds the left pane's visible area.
+    """
+    import nk_GUI
+    import inspect
+
+    # Source check: helper exists
+    assert hasattr(nk_GUI, "_make_scrollable"), (
+        "_make_scrollable helper missing"
+    )
+
+    # Source check: _build_left calls it
+    src = inspect.getsource(nk_GUI.NkCurveGUI._build_left)
+    assert "_make_scrollable" in src, (
+        "_build_left does not call _make_scrollable"
+    )
+
+
+def test_right_pane_uses_grid_layout():
+    """v0.5.8 fix for Linux Mint 1280x800: right pane uses grid layout
+    with equal row weights so the two plot frames (frame_nk, frame_eps)
+    always have the same height regardless of matplotlib's natural-size
+    request.
+    """
+    import nk_GUI
+    import inspect
+
+    src = inspect.getsource(nk_GUI.NkCurveGUI._build_right)
+    assert "rowconfigure" in src, (
+        "_build_right doesn't configure rows"
+    )
+    assert "weight=1" in src, (
+        "_build_right doesn't give equal weight to plot-frame rows"
+    )
+    assert ".grid(" in src, "_build_right doesn't use grid"
+    assert "frame_nk.grid(" in src, "frame_nk not grid'd"
+    assert "frame_eps.grid(" in src, "frame_eps not grid'd"
+
+
+# ────────────────────────────────────────────────────────────────
 # v0.5.6 cross-platform patches
 # ────────────────────────────────────────────────────────────────
 def test_maximize_helper_has_platform_branches():
@@ -336,6 +381,16 @@ def test_gui_features_combined():
             actual_left_w = int(actual_left_w)
         assert 280 <= actual_left_w <= 430, (
             f"left pane width {actual_left_w} outside [280, 430]"
+        )
+
+        # (2b) v0.5.8: frame_nk and frame_eps must have the same height
+        # (Bug 2: nk and epsilon plots had different vertical sizes on
+        # 1280x800 Linux Mint). Grid with weight=1 on both rows forces
+        # equal allocation regardless of matplotlib's natural-size hint.
+        h_nk = app.frame_nk.winfo_height()
+        h_eps = app.frame_eps.winfo_height()
+        assert h_nk == h_eps, (
+            f"plot frames have different heights: nk={h_nk}, eps={h_eps}"
         )
 
         # (3) _maximize_window must be callable on the current platform

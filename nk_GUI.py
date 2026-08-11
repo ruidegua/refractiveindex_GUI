@@ -2,6 +2,24 @@
 nk_GUI.py - Optical Constants (n, k) and Dielectric Function (eps1, eps2) Viewer
 Based on refractiveindex.info database (bundled in ./db, CC0 public domain).
 
+v0.5.8 (refractiveindex_GUI): small-screen layout fixes (Linux Mint).
+        - Left control panel is now wrapped in a scrollable Canvas via
+          the `_make_scrollable(parent)` helper, so all controls
+          (including the Export CSV button at the bottom) remain
+          reachable via mouse wheel / scrollbar on small screens where
+          the total content height (~540 px) exceeds the left pane's
+          visible content area. Before this fix Tk `pack` silently
+          clipped the bottom widget on 1280x800 Linux Mint setups.
+        - Right pane switched from `pack(expand=True)` to `grid` layout
+          with `weight=1` on both plot rows so frame_nk and frame_eps
+          always have the same height. Before, matplotlib's
+          FigureCanvasTkAgg figsize-based natural-size request made
+          the two plots render at different heights on 1280x800
+          Linux Mint.
+        - Mouse wheel handling in `_make_scrollable` covers macOS
+          delta events, X11 Button-4/5 (Cinnamon), and Windows
+          MouseWheel. Bound on canvas Enter, unbound on Leave.
+
 v0.5.7 (refractiveindex_GUI): adaptive window geometry.
         - Replaced hard-coded `1200x900` default + `minsize(1000, 650)`
           with `_adaptive_geometry(root)` that reads
@@ -440,6 +458,76 @@ class _PanManager:
 WL_TO_EN = lambda wl: 1240.0 / wl
 EN_TO_WL = lambda en: 1240.0 / en
 
+
+def _make_scrollable(parent):
+    """Wrap a Frame in a Canvas + vertical scrollbar so content can be
+    scrolled when it exceeds the visible area. Returns the inner Frame
+    that widgets should be packed / gridded into.
+
+    Used by the left control panel so all controls remain reachable
+    even on small screens (e.g. 1280x800 with Linux Mint decorations,
+    where WM chrome + theme can leave the left pane with less content
+    area than the total height of the controls). Without scrolling,
+    Tk pack silently clips the bottom widgets -- Export CSV at the
+    bottom of the panel was unreachable on some Linux Mint setups.
+
+    Mouse wheel handling: bind when cursor enters canvas, unbind on leave.
+    Handles:
+      - macOS / Windows MouseWheel (event.delta is +/-120 per notch)
+      - X11 Button-4 (scroll up) and Button-5 (scroll down), which some
+        Linux WMs (including Cinnamon) deliver in addition to or in
+        place of MouseWheel.
+    """
+    wrapper = ttk.Frame(parent)
+    wrapper.pack(fill="both", expand=True)
+
+    canvas = tk.Canvas(wrapper, highlightthickness=0, borderwidth=0,
+                       takefocus=0)
+    vsb = ttk.Scrollbar(wrapper, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=vsb.set)
+
+    vsb.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+
+    inner = ttk.Frame(canvas)
+    window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+    # Keep scrollregion in sync with inner Frame size
+    def _on_inner_configure(_event):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+    inner.bind("<Configure>", _on_inner_configure)
+
+    # Match inner Frame width to canvas width so widgets fill horizontally
+    def _on_canvas_configure(event):
+        canvas.itemconfigure(window_id, width=event.width)
+    canvas.bind("<Configure>", _on_canvas_configure)
+
+    def _on_wheel(event):
+        if event.num == 4:
+            delta = -1   # X11 scroll up
+        elif event.num == 5:
+            delta = 1    # X11 scroll down
+        else:
+            # macOS / Windows: delta > 0 means scroll up
+            delta = -1 if event.delta > 0 else 1
+        canvas.yview_scroll(delta, "units")
+
+    def _on_enter(_event):
+        canvas.bind_all("<MouseWheel>", _on_wheel)
+        canvas.bind_all("<Button-4>", _on_wheel)
+        canvas.bind_all("<Button-5>", _on_wheel)
+
+    def _on_leave(_event):
+        canvas.unbind_all("<MouseWheel>")
+        canvas.unbind_all("<Button-4>")
+        canvas.unbind_all("<Button-5>")
+
+    canvas.bind("<Enter>", _on_enter)
+    canvas.bind("<Leave>", _on_leave)
+
+    return inner
+
+
 # ════════════════════════════════════════════════════════════
 # Main GUI
 # ════════════════════════════════════════════════════════════
@@ -451,7 +539,7 @@ class NkCurveGUI:
 
     def __init__(self, root):
         self.root = root
-        root.title(f"nk Curve Viewer v0.5.7 — refractiveindex.info ({_DB_SOURCE})")
+        root.title(f"nk Curve Viewer v0.5.8 — refractiveindex.info ({_DB_SOURCE})")
         # Adapt default size + minsize to the actual screen so the window
         # never opens larger than the display and never below a usable
         # floor. See _adaptive_geometry() below for the math.
@@ -518,6 +606,13 @@ class NkCurveGUI:
         self._build_right(right)
 
     def _build_left(self, parent):
+        # Wrap in a scrollable Canvas so all controls (including Export
+        # CSV at the bottom) remain reachable on small screens where the
+        # total content height exceeds the left pane's visible area.
+        # Without this, Tk pack silently clips the bottom widget, which
+        # made Export CSV unreachable on 1280x800 Linux Mint setups
+        # where WM decorations reduced the visible content area.
+        parent = _make_scrollable(parent)
         ttk.Label(parent, text=f"NK Catalog: {len(ENTRIES)} entries",
                   foreground="gray", font=("Arial", 9)).pack(fill="x", pady=(0, 6))
 
@@ -656,15 +751,31 @@ class NkCurveGUI:
         self._populate_tree()
 
     def _build_right(self, parent):
+        # Use grid layout for the two plot frames with equal weights on
+        # the rows, so they always have the same height. pack(expand=True)
+        # on both frames nominally does the same, but matplotlib's
+        # FigureCanvasTkAgg has a figsize-based natural size request
+        # (8x4.2 in @ 110 dpi = 880x462 px) that pack doesn't always
+        # honour consistently across themes / window managers. Grid
+        # forces equal allocation regardless. v0.5.8 regression for
+        # 1280x800 Linux Mint where the two plots rendered at different
+        # heights.
         self.hint = ttk.Label(parent,
                               text="Drag to zoom  ·  Right-click to pan  ·  Scroll to zoom  ·  Click tab to switch active plot",
                               font=("Arial", 8), foreground="gray")
-        self.hint.pack(fill="x", pady=(0, 4))
-
-        # ── Refractive Index frame ────────────────────────
         self.frame_nk = ttk.LabelFrame(parent, text=" Refractive Index (n, k) ",
                                        padding=(4, 2))
-        self.frame_nk.pack(fill="both", expand=True, pady=(0, 4))
+        self.frame_eps = ttk.LabelFrame(parent, text=" Dielectric Function (ε1, ε2) ",
+                                        padding=(4, 2))
+
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=0)   # hint: natural height
+        parent.rowconfigure(1, weight=1)   # frame_nk: equal expand
+        parent.rowconfigure(2, weight=1)   # frame_eps: equal expand
+
+        self.hint.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        self.frame_nk.grid(row=1, column=0, sticky="nsew", pady=(0, 4))
+        self.frame_eps.grid(row=2, column=0, sticky="nsew")
         self.lbl_nk = ttk.Label(self.frame_nk, text="", font=("Arial", 8),
                                 foreground=ACCENT, padding=(2, 0))
         # Pack label at top of frame before canvas
@@ -681,10 +792,8 @@ class NkCurveGUI:
         self._zoom_nk = _ZoomManager(self.ax_nk, on_zoom=self._apply_zoom_nk)
         self._pan_nk  = _PanManager(self.ax_nk)
 
-        # ── Dielectric Function frame ─────────────────────
-        self.frame_eps = ttk.LabelFrame(parent, text=" Dielectric Function (ε1, ε2) ",
-                                        padding=(4, 2))
-        self.frame_eps.pack(fill="both", expand=True)
+        # ── Dielectric Function frame contents ───────────
+        # (self.frame_eps was created above for grid placement)
         self.lbl_eps = ttk.Label(self.frame_eps, text="", font=("Arial", 8),
                                  foreground=ACCENT, padding=(2, 0))
         self.lbl_eps.pack(fill="x", padx=(6, 6), pady=(2, 0))
