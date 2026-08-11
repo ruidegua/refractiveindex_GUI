@@ -166,6 +166,100 @@ def test_csv_export_round_trip(tmp_path):
 
 
 # ────────────────────────────────────────────────────────────────
+# v0.5.7 adaptive window geometry
+# ────────────────────────────────────────────────────────────────
+def test_geometry_1280x800_explicit():
+    """The specific 1280x800 case (ThinkPad X1 Carbon, Surface Pro,
+    older MacBook Air, etc.): default 1054x629, minsize 895x534,
+    left pane 409 px. Window fits screen with decoration slack and
+    the layout is not cramped.
+    """
+    import nk_GUI
+    w, h, min_w, min_h = nk_GUI._compute_geometry(1280, 800)
+    assert w == 1054, f"default_w: got {w}, expected 1054"
+    assert h == 629, f"default_h: got {h}, expected 629"
+    assert min_w == 895, f"minsize_w: got {min_w}, expected 895"
+    assert min_h == 534, f"minsize_h: got {min_h}, expected 534"
+    # Fits screen with slack
+    assert w <= 1280 - 40
+    assert h <= 800 - 60
+    # Minsize is reachable
+    assert min_w <= w
+    assert min_h <= h
+    # Left pane + sash + right minsize fits in minsize width
+    left_w = nk_GUI._left_panel_width(1280)
+    assert left_w == 409, f"left_w: got {left_w}, expected 409"
+    assert left_w + 4 + 400 <= min_w  # 400 = right pane minsize
+
+
+def test_geometry_1920x1080_capped():
+    """Full-HD desktop: default stays in the 1800x1100 envelope so the
+    window doesn't sprawl, left pane keeps the historical 430."""
+    import nk_GUI
+    w, h, _, _ = nk_GUI._compute_geometry(1920, 1080)
+    assert w <= 1800
+    assert h <= 1100
+    assert w <= 1920 - 40
+    assert h <= 1080 - 60
+    assert nk_GUI._left_panel_width(1920) == 430
+
+
+def test_geometry_1024x600_small_screen():
+    """Tiny laptop / netbook: default shrinks to 836x500, left pane to
+    327 px so the right pane keeps room for the plots."""
+    import nk_GUI
+    w, h, _, _ = nk_GUI._compute_geometry(1024, 600)
+    assert w >= 720
+    assert h >= 500
+    assert w <= 1024 - 40
+    assert h <= 600 - 60
+    assert nk_GUI._left_panel_width(1024) == 327
+
+
+def test_geometry_4k_capped_at_max():
+    """4K display: capped at the 1800x1100 envelope."""
+    import nk_GUI
+    w, h, _, _ = nk_GUI._compute_geometry(3840, 2160)
+    assert w == 1800
+    assert h == 1100
+
+
+def test_geometry_invariant_fits_screen():
+    """For a sweep of common screen sizes, default fits the usable area
+    and the layout (left + sash + right minsize 400) fits in minsize.
+    """
+    import nk_GUI
+    for sw, sh in [(800, 500), (1024, 600), (1280, 800), (1366, 768),
+                   (1440, 900), (1680, 1050), (1920, 1080), (2560, 1440),
+                   (3840, 2160)]:
+        w, h, min_w, min_h = nk_GUI._compute_geometry(sw, sh)
+        assert w <= sw - 40, f"{w} > {sw}-40 at {sw}x{sh}"
+        assert h <= sh - 60, f"{h} > {sh}-60 at {sw}x{sh}"
+        assert min_w <= w, f"minsize_w {min_w} > default {w} at {sw}x{sh}"
+        assert min_h <= h, f"minsize_h {min_h} > default {h} at {sw}x{sh}"
+        left_w = nk_GUI._left_panel_width(sw)
+        assert left_w + 4 + 400 <= min_w + 1, (
+            f"layout overflow: left {left_w} + 4 + 400 = {left_w+4+400} "
+            f"> minsize_w {min_w} at {sw}x{sh}"
+        )
+
+
+def test_left_panel_width_normal_screen():
+    """On 1280+ wide screens, left panel is in the [280, 430] range."""
+    import nk_GUI
+    for sw in (1280, 1366, 1440, 1680, 1920, 2560, 3840):
+        w = nk_GUI._left_panel_width(sw)
+        assert 280 <= w <= 430, f"left_w {w} out of range at sw={sw}"
+
+
+def test_left_panel_width_floor():
+    """On very narrow screens, left panel stays at the 280 px floor."""
+    import nk_GUI
+    for sw in (640, 720, 800, 875):
+        assert nk_GUI._left_panel_width(sw) == 280
+
+
+# ────────────────────────────────────────────────────────────────
 # v0.5.6 cross-platform patches
 # ────────────────────────────────────────────────────────────────
 def test_maximize_helper_has_platform_branches():
@@ -233,6 +327,16 @@ def test_gui_features_combined():
         assert len(panes) == 2
         assert pw.paneconfig(panes[0], "stretch")[4] == "never"
         assert pw.paneconfig(panes[1], "stretch")[4] == "always"
+
+        # Left pane width should now come from _left_panel_width, not
+        # the hard-coded 430 -- verify it's at least 280 and <= 430.
+        left_pane = panes[0]
+        actual_left_w = pw.paneconfig(left_pane, "width")[4]
+        if isinstance(actual_left_w, str):
+            actual_left_w = int(actual_left_w)
+        assert 280 <= actual_left_w <= 430, (
+            f"left pane width {actual_left_w} outside [280, 430]"
+        )
 
         # (3) _maximize_window must be callable on the current platform
         # without raising. On macOS it's a no-op; on win32/linux it

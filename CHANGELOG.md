@@ -4,6 +4,53 @@ All notable changes to **refractiveindex_GUI** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.7] — 2026-08-11
+
+### Changed
+- **Adaptive window geometry**: replaced hard-coded `1200x900`
+  default + `minsize(1000, 650)` with `_adaptive_geometry(root)`,
+  which reads `winfo_screenwidth/height` and picks a sensible size
+  for the actual display. Default = 85% of usable screen, clamped to
+  `[720, 1800] × [500, 1100]` and capped at the usable size (with
+  ~40 px horizontal / ~60 px vertical slack for window decorations)
+  so the window never opens larger than the display. Minsize = 85%
+  of default, with a hard floor `[640, 440]`. Window title bar is
+  now `v0.5.7`.
+- **Adaptive left pane width**: `width=430` on the left PanedWindow
+  pane became `_left_panel_width(sw) = min(430, max(280, 32% of sw))`.
+  The 32% rule keeps the historical 430 px on any display ≥ 1344 px
+  wide; on smaller screens the pane shrinks so the right plot area
+  keeps room. Pure helper, unit-tested without a display.
+
+### Fixed
+- **Small-screen display cutoff**: on 1280×800 (ThinkPad X1 Carbon,
+  older MacBook Air, Surface Pro, etc.) the previous 1200×900 default
+  overflowed the display — maximizing it hid the menubar / plot
+  borders. New default at 1280×800 is `1054×629` with minsize
+  `895×534` and left pane `409 px`; window always fits the screen.
+- **Tiny-screen layout collapse**: on 1024×600 netbooks the old
+  `minsize(1000, 650)` was effectively un-shrinkable, leaving no
+  room for the user to grab the sash. New minsize at 1024×600 is
+  `710×440`, and the left pane shrinks to `327 px` so the right pane
+  can render both plots.
+
+### Behaviour at common resolutions
+| Screen | Default | Minsize | Left pane |
+|---|---|---|---|
+| 1920×1080 | 1598×867 | 1358×736 | 430 |
+| 1366×768 | 1127×601 | 957×510 | 430 |
+| **1280×800** | **1054×629** | **895×534** | **409** |
+| 1024×600 | 836×500 | 751×440 | 327 |
+
+### Added
+- Pure helpers `_compute_geometry(sw, sh) -> (w, h, min_w, min_h)` and
+  `_left_panel_width(sw)` so the layout math is unit-testable without
+  a display server.
+- 7 new tests in `tests/test_smoke.py` covering the 1280×800 case
+  explicitly, 1920×1080, 1024×600, 4K, a sweep invariant test across
+  9 common resolutions, and a behaviour test that runs
+  `_adaptive_geometry(root)` against a real `tk.Tk()` root.
+
 ## [0.5.6] — 2026-08-10
 
 ### Fixed

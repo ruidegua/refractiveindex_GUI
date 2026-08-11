@@ -2,6 +2,29 @@
 nk_GUI.py - Optical Constants (n, k) and Dielectric Function (eps1, eps2) Viewer
 Based on refractiveindex.info database (bundled in ./db, CC0 public domain).
 
+v0.5.7 (refractiveindex_GUI): adaptive window geometry.
+        - Replaced hard-coded `1200x900` default + `minsize(1000, 650)`
+          with `_adaptive_geometry(root)` that reads
+          `winfo_screenwidth/height` and picks a sensible size for the
+          current display. Default = 85% of usable screen, clamped to
+          [720, 1800] x [500, 1100] and capped so the window never
+          exceeds the display. Minsize = 85% of default, floor
+          [640, 440].
+        - Left PanedWindow pane width is now `_left_panel_width(sw)`:
+          min(430, max(280, 32% of screen width)). On a 1280-wide
+          display this is 409 px; on 1024-wide it drops to 327 px
+          so the right pane keeps room for the plots.
+        - Behaviour on common resolutions:
+            * 1920x1080 -> default 1598x867, left 430, minsize 1358x736
+            * 1366x768  -> default 1127x601, left 430, minsize  957x510
+            * 1280x800  -> default 1054x629, left 409, minsize  895x534
+            * 1024x600  -> default  836x500, left 327, minsize  751x440
+        - minsize_w also has a layout-aware floor (left pane + sash +
+          right pane minsize + 20 px slack) so the panes always fit
+          at minsize, not just at default.
+        - Pure helpers `_compute_geometry(sw, sh) -> (w, h, min_w, min_h)`
+          and `_left_panel_width(sw)` are unit-tested without a display.
+
 v0.5.6 (refractiveindex_GUI): cross-platform compatibility fixes.
         - Window maximize is now platform-aware (helper _maximize_window):
           state('zoomed') on win32, no-op on darwin (Tk ignores it),
@@ -428,9 +451,11 @@ class NkCurveGUI:
 
     def __init__(self, root):
         self.root = root
-        root.title(f"nk Curve Viewer v0.5.6 — refractiveindex.info ({_DB_SOURCE})")
-        root.geometry("1200x900")
-        root.minsize(1000, 650)
+        root.title(f"nk Curve Viewer v0.5.7 — refractiveindex.info ({_DB_SOURCE})")
+        # Adapt default size + minsize to the actual screen so the window
+        # never opens larger than the display and never below a usable
+        # floor. See _adaptive_geometry() below for the math.
+        self._screen_w, self._screen_h = _adaptive_geometry(root)
         _maximize_window(root)   # platform-aware: zoomed on win32, no-op on darwin, fallback geometry on linux
         root.configure(bg=BG)
 
@@ -481,7 +506,11 @@ class NkCurveGUI:
         paned.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
         left = tk.Frame(paned, bg=BG)
-        paned.add(left, minsize=200, stretch="never", width=430)
+        # Left pane width: 430 on normal/large screens, shrinks on small
+        # displays (e.g. 1024-wide) so the right pane keeps room for the
+        # plots. See _left_panel_width() for the rule.
+        left_w = _left_panel_width(self._screen_w)
+        paned.add(left, minsize=200, stretch="never", width=left_w)
         self._build_left(left)
 
         right = tk.Frame(paned, bg=BG)
@@ -1335,6 +1364,57 @@ def _set_ylim_linear(ax, ylo, yhi):
 #   the request. Belt-and-suspenders: if zoomed didn't take effect, fall
 #   back to setting geometry directly.
 # ════════════════════════════════════════════════════════════
+def _left_panel_width(sw: int) -> int:
+    """Pure: given screen width (px), return the suggested width for the
+    left control panel. 430 px on normal/large screens, scales down on
+    small displays with a 280 px floor.
+    """
+    return min(430, max(280, int(sw * 0.32)))
+
+
+def _compute_geometry(sw: int, sh: int) -> tuple[int, int, int, int]:
+    """Pure: given screen size (px), return (default_w, default_h,
+    min_w, min_h) for the main window.
+
+    Rules:
+      - Leave ~40 px horizontal / ~60 px vertical slack for window
+        decorations (title bar, borders, taskbar).
+      - Default size = 85% of usable screen, clamped to a comfortable
+        range [720, 1800] x [500, 1100] and capped at the usable size
+        so the window is never larger than the display.
+      - Minsize = 85% of default, with hard floor [640, 440] AND a
+        layout-aware floor (left pane + sash + right pane minsize +
+        20 px slack) so the panes always fit when the window is at
+        its minsize.
+
+    Pure (no Tk calls, no side effects) so it can be unit-tested
+    without a display.
+    """
+    screen_w = max(640, sw - 40)
+    screen_h = max(440, sh - 60)
+    w = min(screen_w, max(720, min(1800, int(screen_w * 0.85))))
+    h = min(screen_h, max(500, min(1100, int(screen_h * 0.85))))
+    # Layout-aware minsize: left + sash + right minsize + 20 px slack
+    left_w = _left_panel_width(sw)
+    layout_min_w = left_w + 4 + 400 + 20  # 4 = sash, 400 = right minsize
+    min_w = max(640, min(int(w * 0.85), screen_w), layout_min_w)
+    min_h = max(440, min(int(h * 0.85), screen_h))
+    return w, h, min_w, min_h
+
+
+def _adaptive_geometry(root) -> tuple[int, int]:
+    """Set window default size + minsize based on the actual screen.
+    Returns (screen_w, screen_h) so callers can scale other layout
+    constants (e.g. left pane width) consistently.
+    """
+    sw = root.winfo_screenwidth()
+    sh = root.winfo_screenheight()
+    w, h, min_w, min_h = _compute_geometry(sw, sh)
+    root.geometry(f"{w}x{h}")
+    root.minsize(min_w, min_h)
+    return sw, sh
+
+
 def _maximize_window(root):
     """Maximize root window across platforms. No-op on macOS."""
     if sys.platform == "win32":
