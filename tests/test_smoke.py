@@ -305,6 +305,64 @@ def test_right_pane_uses_grid_layout():
 
 
 # ────────────────────────────────────────────────────────────────
+# v0.5.9 wheel-scroll fix (blank space at top of left panel)
+# ────────────────────────────────────────────────────────────────
+def test_scrollregion_rooted_at_origin():
+    """v0.5.9 fix for blank space at the top of the left panel when
+    scrolling: the scrollregion must be explicitly anchored at canvas
+    (0, 0). Using `canvas.bbox("all")` directly is not safe because
+    bbox can transiently return coordinates with y < 0 during initial
+    layout or content reflow. A scrollregion with a negative top lets
+    the user scroll past y=0, exposing blank canvas background at the
+    top of the viewport.
+    """
+    import nk_GUI
+    import inspect
+
+    src = inspect.getsource(nk_GUI._make_scrollable)
+    assert "scrollregion=(0, 0," in src, (
+        "scrollregion not explicitly anchored at canvas origin; "
+        "use (0, 0, bbox[2], bbox[3]) instead of bbox('all') directly"
+    )
+    assert 'canvas.bbox("all")' not in src, (
+        "scrollregion still derived from bbox('all') -- can extend "
+        "above the inner frame's top during transient layout states"
+    )
+
+
+def test_wheel_bound_to_canvas_not_global():
+    """v0.5.9 fix for blank space at the top of the left panel: wheel
+    events must bind to the canvas widget, not globally via bind_all.
+    bind_all causes _on_wheel to fire for events over the right
+    pane's matplotlib plots, which have their own wheel binding for
+    zoom. The double-fire scrolls the left canvas unintentionally,
+    pushing the left panel away from its natural scroll position and
+    exposing blank canvas space at the top.
+    """
+    import nk_GUI
+    import inspect
+
+    src = inspect.getsource(nk_GUI._make_scrollable)
+    # Check for an actual `.bind_all(` call, not just the word
+    # "bind_all" (which appears in our docstring explaining why we
+    # don't use it).
+    assert ".bind_all(" not in src, (
+        "_make_scrollable uses .bind_all(...) -- wheel events fire "
+        "globally and can scroll the left pane when the user wheels on "
+        "the right pane's matplotlib plots"
+    )
+    assert 'canvas.bind("<MouseWheel>"' in src, (
+        "MouseWheel handler not bound to canvas widget"
+    )
+    assert 'canvas.bind("<Button-4>"' in src, (
+        "X11 Button-4 (scroll up) not handled"
+    )
+    assert 'canvas.bind("<Button-5>"' in src, (
+        "X11 Button-5 (scroll down) not handled"
+    )
+
+
+# ────────────────────────────────────────────────────────────────
 # v0.5.6 cross-platform patches
 # ────────────────────────────────────────────────────────────────
 def test_maximize_helper_has_platform_branches():
@@ -392,6 +450,93 @@ def test_gui_features_combined():
         assert h_nk == h_eps, (
             f"plot frames have different heights: nk={h_nk}, eps={h_eps}"
         )
+
+        # (2c) v0.5.9: the scrollable Canvas in the left pane must
+        # have a scrollregion rooted at canvas (0, 0). A scrollregion
+        # with negative top lets the user scroll past y=0 and exposes
+        # blank canvas background at the top of the left panel.
+        # Find the scrollable Canvas: it's the only Canvas inside the
+        # left pane (the right pane's matplotlib FigureCanvasTkAgg is
+        # not a descendant of the left pane).
+        def find_canvas(widget):
+            if widget.winfo_class() == "Canvas":
+                return widget
+            for child in widget.winfo_children():
+                result = find_canvas(child)
+                if result is not None:
+                    return result
+            return None
+
+        scroll_canvas = find_canvas(left_pane)
+        assert scroll_canvas is not None, (
+            "scrollable Canvas not found in left pane"
+        )
+        sr = scroll_canvas.cget("scrollregion")
+        assert sr, (
+            f"scrollregion not set on scrollable Canvas: {sr!r}"
+        )
+        sr_vals = [float(x) for x in sr.split()]
+        assert sr_vals[0] == 0 and sr_vals[1] == 0, (
+            f"scrollregion not rooted at (0, 0): {sr} -- user can "
+            f"scroll past y=0 and see blank canvas at the top"
+        )
+
+        # (2d) v0.5.9: wheel events on the left pane's scrollable
+        # Canvas must scroll it; wheel events on the right pane's
+        # matplotlib canvas must NOT scroll the left pane. The old
+        # bind_all binding double-fired on matplotlib's wheel handler
+        # and pushed the left canvas away from scroll position 0,
+        # exposing blank space at the top.
+        bbox = scroll_canvas.bbox("all")
+        canvas_h = scroll_canvas.winfo_height()
+        scrollable = (
+            bbox is not None
+            and bbox[3] > canvas_h
+            and canvas_h > 1
+        )
+        if scrollable:
+            scroll_canvas.yview_moveto(0)
+            root.update_idletasks()
+            assert scroll_canvas.yview()[0] == 0.0, (
+                "scrollable Canvas didn't reset to scroll position 0"
+            )
+
+            # Wheel DOWN on the scrollable Canvas scrolls it down.
+            scroll_canvas.event_generate("<MouseWheel>", delta=-120)
+            root.update_idletasks()
+            assert scroll_canvas.yview()[0] > 0.0, (
+                "MouseWheel on scrollable Canvas didn't scroll it"
+            )
+
+            # Reset to top and confirm.
+            scroll_canvas.yview_moveto(0)
+            root.update_idletasks()
+
+            # Wheel DOWN on the right pane's matplotlib canvas must
+            # NOT scroll the left pane. Find the matplotlib canvas
+            # (a Canvas inside the right pane that isn't our
+            # scrollable canvas).
+            right_pane = panes[1]
+
+            def find_other_canvas(widget, exclude):
+                if widget.winfo_class() == "Canvas" and widget is not exclude:
+                    return widget
+                for child in widget.winfo_children():
+                    result = find_other_canvas(child, exclude)
+                    if result is not None:
+                        return result
+                return None
+
+            mpl_canvas = find_other_canvas(right_pane, scroll_canvas)
+            if mpl_canvas is not None:
+                scroll_canvas.yview_moveto(0)
+                root.update_idletasks()
+                mpl_canvas.event_generate("<MouseWheel>", delta=-120)
+                root.update_idletasks()
+                assert scroll_canvas.yview()[0] == 0.0, (
+                    "left pane scrolled when wheel fired on right pane's "
+                    "matplotlib canvas -- bind_all bug regressed"
+                )
 
         # (3) _maximize_window must be callable on the current platform
         # without raising. On macOS it's a no-op; on win32/linux it

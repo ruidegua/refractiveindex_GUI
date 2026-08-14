@@ -4,6 +4,46 @@ All notable changes to **refractiveindex_GUI** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.9] — 2026-08-15
+
+### Fixed
+- **Blank canvas space at the top of the left panel when scrolling**.
+  Two coupled bugs in `_make_scrollable`:
+  1. **Wheel bound globally via `bind_all`**: scrolling over the right
+     pane's matplotlib plots double-fired `_on_wheel` (matplotlib's
+     zoom handler + the global binding), scrolling the left canvas
+     away from its natural position. Once the user looked back at the
+     left panel, the top portion showed blank canvas background.
+     Switched to `canvas.bind("<MouseWheel>" / "<Button-4>" /
+     "<Button-5>", ...)` — Tk event propagation ensures this still
+     fires for the canvas AND every descendant control (search entry,
+     tree, radiobuttons, options, buttons), but NOT for events over
+     the right pane. No `Enter`/`Leave` dance needed.
+  2. **Scrollregion derived from `canvas.bbox("all")` directly**:
+     bbox can transiently report coordinates with `y < 0` during
+     initial layout or content reflow. A scrollregion with a
+     negative top lets the user scroll past y=0, exposing blank
+     canvas background at the top of the viewport. Anchored the
+     scrollregion at `(0, 0, bbox[2], bbox[3])` so the user can
+     never scroll above the inner frame's top.
+
+### Added
+- 2 new source-inspection tests:
+    - `test_scrollregion_rooted_at_origin` — verifies the
+      scrollregion is built with explicit `(0, 0, ...)` and not from
+      `bbox("all")` directly.
+    - `test_wheel_bound_to_canvas_not_global` — verifies no
+      `.bind_all(...)` call exists in `_make_scrollable`.
+- 1 in-process assertion added to `test_gui_features_combined`:
+    - `sr_vals[0] == 0 and sr_vals[1] == 0` — verifies the live
+      scrollregion on the built GUI is rooted at canvas (0, 0).
+    - `event_generate("<MouseWheel>")` on the scrollable Canvas
+      changes `yview()` (wheel does scroll the left panel).
+    - `event_generate("<MouseWheel>")` on the right pane's matplotlib
+      Canvas does NOT change the left panel's `yview()` (no more
+      `bind_all` regression — wheel only scrolls the panel it
+      belongs to).
+
 ## [0.5.8] — 2026-08-11
 
 ### Fixed

@@ -471,12 +471,31 @@ def _make_scrollable(parent):
     Tk pack silently clips the bottom widgets -- Export CSV at the
     bottom of the panel was unreachable on some Linux Mint setups.
 
-    Mouse wheel handling: bind when cursor enters canvas, unbind on leave.
-    Handles:
+    Mouse wheel handling: bind directly to the canvas widget (not
+    bind_all). Tk event propagation makes this fire for the canvas OR
+    any descendant, so every control in the left pane (search entry,
+    tree, radiobuttons, options entries, buttons, etc.) can scroll
+    the panel -- no Enter/Leave dance required. Handles:
       - macOS / Windows MouseWheel (event.delta is +/-120 per notch)
       - X11 Button-4 (scroll up) and Button-5 (scroll down), which some
         Linux WMs (including Cinnamon) deliver in addition to or in
         place of MouseWheel.
+
+    Why bind instead of bind_all: bind_all also fires for wheel events
+    over the right pane's matplotlib plots, which have their own
+    wheel binding for zoom. With bind_all, scrolling on a plot would
+    double-fire: matplotlib zooms AND _on_wheel scrolls the left
+    canvas. That unintentional scroll pushes the left panel away
+    from its natural position and exposes blank canvas background at
+    the top of the left pane. Binding directly to the canvas confines
+    wheel scrolling to the panel it belongs to.
+
+    Scrollregion is anchored at canvas (0, 0): bbox("all") can
+    transiently report coordinates with y < 0 during initial layout
+    or content reflow. A scrollregion with a negative top lets the
+    user scroll past y=0, which leaves blank canvas background at
+    the top of the viewport. Using (0, 0, w, h) explicitly prevents
+    that, regardless of what bbox returns.
     """
     wrapper = ttk.Frame(parent)
     wrapper.pack(fill="both", expand=True)
@@ -492,9 +511,14 @@ def _make_scrollable(parent):
     inner = ttk.Frame(canvas)
     window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
 
-    # Keep scrollregion in sync with inner Frame size
+    # Keep scrollregion in sync with inner Frame size. Anchor at (0, 0)
+    # so the user can never scroll above the inner frame's top -- that
+    # region would show blank canvas background, which looks like a
+    # bug at the top of the panel.
     def _on_inner_configure(_event):
-        canvas.configure(scrollregion=canvas.bbox("all"))
+        bbox = canvas.bbox(window_id)
+        if bbox:
+            canvas.configure(scrollregion=(0, 0, bbox[2], bbox[3]))
     inner.bind("<Configure>", _on_inner_configure)
 
     # Match inner Frame width to canvas width so widgets fill horizontally
@@ -512,18 +536,11 @@ def _make_scrollable(parent):
             delta = -1 if event.delta > 0 else 1
         canvas.yview_scroll(delta, "units")
 
-    def _on_enter(_event):
-        canvas.bind_all("<MouseWheel>", _on_wheel)
-        canvas.bind_all("<Button-4>", _on_wheel)
-        canvas.bind_all("<Button-5>", _on_wheel)
-
-    def _on_leave(_event):
-        canvas.unbind_all("<MouseWheel>")
-        canvas.unbind_all("<Button-4>")
-        canvas.unbind_all("<Button-5>")
-
-    canvas.bind("<Enter>", _on_enter)
-    canvas.bind("<Leave>", _on_leave)
+    # Bind directly to the canvas (Tk event propagation handles
+    # descendants). No Enter/Leave / bind_all needed.
+    canvas.bind("<MouseWheel>", _on_wheel)
+    canvas.bind("<Button-4>", _on_wheel)
+    canvas.bind("<Button-5>", _on_wheel)
 
     return inner
 
