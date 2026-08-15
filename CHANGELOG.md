@@ -4,6 +4,26 @@ All notable changes to **refractiveindex_GUI** are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.10] — 2026-08-15
+
+### Added
+- **CeO2 (cerium dioxide) shelf in db_extra/** — Marabelli & Wachter,
+  Phys. Rev. B 36, 1238 (1987), DOI 10.1103/PhysRevB.36.1238. Single
+  crystal CeO2 reflectivity 1 meV-12 eV at 300 K, Kramers-Kronig
+  analysis -> eps1, eps2 -> n, k via n + ik = sqrt(eps). Digitized
+  by the user from the paper's Fig 2 (high-E) and Fig 3 (low-E).
+  Wavelength range: ~0.10-285 um (674 points). Reaches the GUI via
+  `CeO2 / Marabelli-1987 / nk-Marabelli-1987`.
+- `db_extra/catalog-ce.yml` — refractiveindex.info-format catalog
+  listing the CeO2 shelf.
+- `db_extra/build_ceo2_marabelli.py` — reproducible build script
+  (regenerates the yml from the user's digitized CSVs).
+- `db_extra/plot_check_ceo2.py` — sanity-check plot script (4-panel:
+  full-range eps1/eps2, 4 eV main peak zoom, phonon-mode tail).
+- 1 new in-process test: `test_load_local_ceo2_marabelli` (plus 2
+  existing tests updated to include CeO2). Suite: 26/26 pass
+  (was 25).
+
 ## [0.5.9] — 2026-08-15
 
 ### Fixed

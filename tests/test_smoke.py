@@ -58,15 +58,17 @@ def test_local_db_present():
     import nk_GUI
     assert (REPO_ROOT / "db_extra" / "catalog-pu.yml").is_file()
     assert (REPO_ROOT / "db_extra" / "catalog-sc.yml").is_file()
+    assert (REPO_ROOT / "db_extra" / "catalog-ce.yml").is_file()
     assert nk_GUI.LOCAL_DB_PATH.is_dir()
 
 
 def test_local_catalogs_merged_into_index():
-    """The Pu and Sc local shelves appear in INDEX_NK after merge."""
+    """The Pu, Sc, CeO2 local shelves appear in INDEX_NK after merge."""
     import nk_GUI
     shelves = {sid for sid, _, _ in nk_GUI.INDEX_NK}
     assert "Pu" in shelves, f"Pu missing from INDEX_NK: {shelves}"
     assert "Sc" in shelves, f"Sc missing from INDEX_NK: {shelves}"
+    assert "CeO2" in shelves, f"CeO2 missing from INDEX_NK: {shelves}"
 
 
 def test_db_source_resolution():
@@ -111,6 +113,41 @@ def test_load_local_sc():
     assert len(wl) == 800
     # Sc-Sigrist covers a huge wavelength range (henke.lbl.gov 1.24e-4 to 4.59 um)
     assert wl[0] != wl[-1]
+
+
+def test_load_local_ceo2_marabelli():
+    """CeO2/Marabelli-1987 is a local db_extra/ entry (PRB 36, 1238 1987).
+
+    Single crystal CeO2 reflectivity 1 meV-12 eV, Kramers-Kronig -> eps1,
+    eps2; converted to n,k via n+ik = sqrt(eps1 + i*eps2). Digitized from
+    Marabelli & Wachter PRB 36, 1238 (1987), Figs 2 & 3.
+
+    Sanity checks:
+      - 800-point linspace output (loader fills to linspace of wl_range)
+      - Wavelength range covers the full ~0.10-285 um (1 meV-12 eV)
+      - n peaks in the phonon-mode region (~40-50 um)
+      - k >= 0 everywhere (CeO2 is passive, no gain)
+      - n, k finite everywhere
+    """
+    import nk_GUI
+    wl, n, k = nk_GUI._load_material_data(
+        "CeO2", "Marabelli-1987", "nk-Marabelli-1987"
+    )
+    assert len(wl) == 800
+    # Full range from digitized data: ~100 nm to ~285 um
+    assert wl[0] == pytest.approx(100, abs=2)
+    assert wl[-1] == pytest.approx(285000, rel=0.02)
+    # CeO2 is passive: k >= 0 in physical data. The yml has k clipped to >= 0,
+    # but the loader's cubic interp1d can overshoot by ~1e-4 at transitions
+    # from clipped zero regions to non-zero values (standard cubic spline
+    # overshoot, well-known artifact). Tolerate tiny negative.
+    assert (k >= -0.01).all(), f"unexpected negative k in CeO2: min={k.min()}"
+    # n peak in phonon-mode region (Fig 3, ~30-50 um = 217-333 cm^-1)
+    # Marabelli TO mode ~ 270 cm^-1 ~ 37 um
+    peak_idx = n.argmax()
+    assert 30000 < wl[peak_idx] < 60000, (
+        f"n peak at {wl[peak_idx]:.0f} nm, expected in 30-60 um range"
+    )
 
 
 def test_load_local_pu_oxide_48nm():

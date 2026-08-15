@@ -1,0 +1,23 @@
+# Local CeO2 (cerium dioxide) optical constants catalog
+# Source: F. Marabelli and P. Wachter,
+#   "Covalent insulator CeO2: optical reflectivity measurements",
+#   Phys. Rev. B 36, 1238 (1987).
+#   DOI: 10.1103/PhysRevB.36.1238
+#
+# Data digitized by user from the paper's Figs 2 (high-E, 0.4-12 eV) and
+# 3 (low-E, 1 meV-0.2 eV) using webplotdigitizer-style extraction. Original
+# data was tabulated epsilon (eps1, eps2); converted to n, k via
+# n + ik = sqrt(eps1 + i*eps2) for compatibility with the GUI loader
+# (which supports tabulated nk).
+#
+# Format matches refractiveindex.info catalog-nk.yml structure
+- SHELF: CeO2
+  name: Cerium dioxide (Marabelli & Wachter 1987)
+  content:
+    - BOOK: Marabelli-1987
+      name: "CeO2 single crystal, 300 K - Marabelli & Wachter 1987 PRB 36, 1238"
+      content:
+        - DIVIDER: "E = 0.0043-12.3 eV, lambda ~ 0.10-285 um (full range: phonon tail to UV)"
+        - PAGE: nk-Marabelli-1987
+          name: "CeO2 n,k (Marabelli & Wachter 1987, Figs 2 & 3)"
+          data: CeO2/Marabelli-1987.yml
